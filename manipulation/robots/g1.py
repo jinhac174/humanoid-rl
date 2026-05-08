@@ -1,13 +1,13 @@
 import math
-from pathlib import Path
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 
+from manipulation.utils.paths import ASSET_ROOT
+
 # ── Asset path ────────────────────────────────────────────────────────────────
-_ASSET_ROOT = Path(__file__).resolve().parents[2] / "assets"
-G1_USD_PATH  = str(_ASSET_ROOT / "robots" / "g1" / "usd" / "g1_dex3.usd")
+G1_USD_PATH = str(ASSET_ROOT / "robots" / "g1" / "usd" / "g1_dex3.usd")
 
 # ── Actuator physics ──────────────────────────────────────────────────────────
 # Source: Unitree G1 motor specs (5020 and 4010 motor models)

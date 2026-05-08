@@ -20,7 +20,7 @@ def get_next_run_dir(base_dir: Path) -> Path:
         if m:
             run_ids.append(int(m.group(1)))
     next_id = 0 if not run_ids else max(run_ids) + 1
-    run_dir = base_dir / f"run_{next_id:03d}"
+    run_dir = base_dir / f"run_{next_id:02d}"
     run_dir.mkdir(parents=False, exist_ok=False)
     return run_dir
 
@@ -37,7 +37,7 @@ def main(cfg: DictConfig):
     torch.manual_seed(cfg.seed)
 
     # ── Run directory ──────────────────────────────────────────────────────
-    base_dir = Path(cfg.log_root) / cfg.task.log_name / cfg.algo.name / f"seed{cfg.seed}"
+    base_dir = Path(cfg.log_root) / cfg.task.log_name / cfg.algo.name
     run_dir  = get_next_run_dir(base_dir)
     for d in ["checkpoints", "hydra", "wandb", "eval"]:
         (run_dir / d).mkdir(parents=True, exist_ok=True)
@@ -49,15 +49,21 @@ def main(cfg: DictConfig):
         f.write("\n".join(HydraConfig.get().overrides.task))
 
     # ── W&B ───────────────────────────────────────────────────────────────
-    run_name = f"seed{cfg.seed}_{run_dir.name}"
     wandb.init(
-        project = cfg.wandb.project,
-        name    = run_name,
-        group   = f"{cfg.task.log_name}_{cfg.algo.name}",
-        tags    = [cfg.task.log_name, cfg.algo.name, f"seed{cfg.seed}"],
-        dir     = str(run_dir / "wandb"),
-        mode    = cfg.wandb.mode,
-        config  = OmegaConf.to_container(cfg, resolve=True),
+        project  = cfg.wandb.project,
+        name     = f"{cfg.algo.name}_{cfg.task.log_name}_{run_dir.name}",
+        group    = f"{cfg.task.log_name}_{cfg.algo.name}",
+        job_type = "train",
+        tags     = [
+            cfg.task.log_name,
+            cfg.algo.name,
+            f"seed{cfg.seed}",
+            f"n{cfg.num_envs}",
+        ],
+        notes    = cfg.wandb.get("notes", ""),
+        dir      = str(run_dir / "wandb"),
+        mode     = cfg.wandb.mode,
+        config   = OmegaConf.to_container(cfg, resolve=True),
     )
 
     # ── Build env_cfg ──────────────────────────────────────────────────────

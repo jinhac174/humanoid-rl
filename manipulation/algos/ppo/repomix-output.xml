@@ -1,0 +1,677 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+__init__.py
+buffer.py
+network.py
+ppo.py
+trainer.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="__init__.py">
+
+</file>
+
+<file path="buffer.py">
+import torch
+
+
+class RolloutBuffer:
+
+    def __init__(self, num_steps, num_envs, obs_dim, action_dim, device):
+        self.num_steps  = num_steps
+        self.num_envs   = num_envs
+        self.obs_dim    = obs_dim
+        self.action_dim = action_dim
+        self.device     = device
+
+        self.obs        = torch.zeros(num_steps, num_envs, obs_dim,    device=device)
+        self.actions    = torch.zeros(num_steps, num_envs, action_dim, device=device)
+        self.rewards    = torch.zeros(num_steps, num_envs,             device=device)
+        self.dones      = torch.zeros(num_steps, num_envs,             device=device)
+        self.values     = torch.zeros(num_steps, num_envs,             device=device)
+        self.log_probs  = torch.zeros(num_steps, num_envs,             device=device)
+        self.advantages = torch.zeros(num_steps, num_envs,             device=device)
+        self.returns    = torch.zeros(num_steps, num_envs,             device=device)
+        self.step = 0
+
+    def insert(self, obs, actions, rewards, dones, values, log_probs):
+        self.obs[self.step]       = obs
+        self.actions[self.step]   = actions
+        self.rewards[self.step]   = rewards
+        self.dones[self.step]     = dones
+        self.values[self.step]    = values
+        self.log_probs[self.step] = log_probs
+        self.step += 1
+
+    def compute_returns_and_advantages(self, last_value, gamma, lam):
+        """
+        GAE-Lambda advantage estimation.
+        FIX: next_not_done uses dones[t] not dones[t+1].
+        dones[t] marks that the episode ended at step t --
+        the bootstrap must be cut at t, not t+1.
+        """
+        last_gae = 0.0
+        for t in reversed(range(self.num_steps)):
+            if t == self.num_steps - 1:
+                next_value = last_value
+            else:
+                next_value = self.values[t + 1]
+
+            next_not_done = 1.0 - self.dones[t]
+            delta         = self.rewards[t] + gamma * next_value * next_not_done - self.values[t]
+            last_gae      = delta + gamma * lam * next_not_done * last_gae
+
+            self.advantages[t] = last_gae
+            self.returns[t]    = last_gae + self.values[t]
+
+    def get_batches(self, num_mini_batches):
+        total      = self.num_steps * self.num_envs
+        indices    = torch.randperm(total, device=self.device)
+        batch_size = total // num_mini_batches
+
+        obs_flat        = self.obs.view(total, self.obs_dim)
+        actions_flat    = self.actions.view(total, self.action_dim)
+        log_probs_flat  = self.log_probs.view(total)
+        values_flat     = self.values.view(total)
+        returns_flat    = self.returns.view(total)
+        advantages_flat = self.advantages.view(total)
+        advantages_flat = (advantages_flat - advantages_flat.mean()) / \
+                          (advantages_flat.std() + 1e-8)
+
+        for start in range(0, total, batch_size):
+            idx = indices[start : start + batch_size]
+            yield (
+                obs_flat[idx],
+                actions_flat[idx],
+                log_probs_flat[idx],
+                advantages_flat[idx],
+                returns_flat[idx],
+                values_flat[idx],
+            )
+
+    def reset(self):
+        self.step = 0
+</file>
+
+<file path="network.py">
+import math
+import torch
+import torch.nn as nn
+from torch.distributions import Normal
+
+
+class ActorCritic(nn.Module):
+    """
+    Supports two modes controlled by `shared`:
+
+        shared=True  (donor default):
+            Single trunk [obs → hidden_dims → features], then two 1-layer
+            heads (actor_head → action_dim, critic_head → 1). The trunk runs
+            once per forward pass, so actor and critic share all hidden layers.
+            This matches rl_games `separate: False`.
+
+        shared=False (your can_push default):
+            Separate actor and critic MLPs with independently configured
+            hidden_dims. No shared parameters.
+
+    Other donor-matching flags:
+        use_tanh=False  (donor: mu_activation=None -- raw output, env clamps)
+        init_noise_std=1.0  (donor: sigma_init val=0 → log_std=0 → std=1)
+    """
+
+    def __init__(
+        self,
+        obs_dim,
+        action_dim,
+        shared=True,
+        hidden_dims=(1024, 1024, 512, 512),
+        actor_hidden_dims=(512, 256, 128),
+        critic_hidden_dims=(512, 256, 128),
+        activation="elu",
+        init_noise_std=1.0,
+        use_tanh=False,
+    ):
+        super().__init__()
+        self.shared = shared
+        self.use_tanh = use_tanh
+
+        act_fn = nn.ELU if activation == "elu" else nn.ReLU
+
+        if shared:
+            trunk_layers = []
+            prev = obs_dim
+            for h in hidden_dims:
+                trunk_layers.extend([nn.Linear(prev, h), act_fn()])
+                prev = h
+            self.trunk = nn.Sequential(*trunk_layers)
+            self.actor_head = nn.Linear(prev, action_dim)
+            self.critic_head = nn.Linear(prev, 1)
+        else:
+            actor_layers = []
+            prev = obs_dim
+            for h in actor_hidden_dims:
+                actor_layers.extend([nn.Linear(prev, h), act_fn()])
+                prev = h
+            actor_layers.append(nn.Linear(prev, action_dim))
+            self.actor = nn.Sequential(*actor_layers)
+
+            critic_layers = []
+            prev = obs_dim
+            for h in critic_hidden_dims:
+                critic_layers.extend([nn.Linear(prev, h), act_fn()])
+                prev = h
+            critic_layers.append(nn.Linear(prev, 1))
+            self.critic = nn.Sequential(*critic_layers)
+
+        # Learned log-std -- observation-independent, matches donor's fixed_sigma
+        self.log_std = nn.Parameter(
+            torch.full((action_dim,), math.log(init_noise_std))
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=math.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+
+        # Small gain on actor output → policy starts near zero actions
+        if self.shared:
+            nn.init.orthogonal_(self.actor_head.weight, gain=0.01)
+            nn.init.orthogonal_(self.critic_head.weight, gain=1.0)
+        else:
+            nn.init.orthogonal_(self.actor[-1].weight, gain=0.01)
+            nn.init.orthogonal_(self.critic[-1].weight, gain=1.0)
+
+    def get_value(self, obs):
+        if self.shared:
+            return self.critic_head(self.trunk(obs)).squeeze(-1)
+        return self.critic(obs).squeeze(-1)
+
+    def get_action_and_value(self, obs, action=None):
+        if self.shared:
+            features = self.trunk(obs)
+            mean = self.actor_head(features)
+            value = self.critic_head(features).squeeze(-1)
+        else:
+            mean = self.actor(obs)
+            value = self.critic(obs).squeeze(-1)
+
+        if self.use_tanh:
+            mean = torch.tanh(mean)
+
+        std = self.log_std.exp().expand_as(mean)
+        dist = Normal(mean, std)
+
+        if action is None:
+            action = dist.sample()
+
+        log_prob = dist.log_prob(action).sum(-1)
+        entropy = dist.entropy().sum(-1)
+
+        return action, log_prob, entropy, value, mean
+</file>
+
+<file path="ppo.py">
+import torch
+import torch.nn as nn
+from torch.optim import Adam
+
+from manipulation.algos.ppo.buffer import RolloutBuffer
+from manipulation.algos.ppo.network import ActorCritic
+from manipulation.utils.logging import explained_variance
+from manipulation.utils.normalization import RunningMeanStd
+
+
+class PPO:
+    def __init__(self, obs_dim, action_dim, num_envs, cfg, device):
+        self.cfg    = cfg
+        self.device = device
+
+        self.network = ActorCritic(
+            obs_dim            = obs_dim,
+            action_dim         = action_dim,
+            shared             = getattr(cfg, "shared", False),
+            hidden_dims        = list(getattr(cfg, "hidden_dims", [1024, 1024, 512, 512])),
+            actor_hidden_dims  = list(getattr(cfg, "actor_hidden_dims", [512, 256, 128])),
+            critic_hidden_dims = list(getattr(cfg, "critic_hidden_dims", [512, 256, 128])),
+            activation         = cfg.activation,
+            init_noise_std     = cfg.init_noise_std,
+            use_tanh           = getattr(cfg, "use_tanh", False),
+        ).to(device)
+
+        self.optimizer = Adam(self.network.parameters(), lr=cfg.learning_rate)
+
+        self.lr_schedule  = getattr(cfg, "lr_schedule",  "fixed")
+        self.kl_threshold = getattr(cfg, "kl_threshold", 0.016)
+        self.lr_min       = getattr(cfg, "lr_min",       1.0e-6)
+        self.lr_max       = getattr(cfg, "lr_max",       1.0e-2)
+        self.current_lr   = float(cfg.learning_rate)
+
+        self.buffer = RolloutBuffer(
+            num_steps  = cfg.num_steps_per_env,
+            num_envs   = num_envs,
+            obs_dim    = obs_dim,
+            action_dim = action_dim,
+            device     = device,
+        )
+
+        self.reward_scale = getattr(cfg, "reward_scale", 1.0)
+        self.value_coef = getattr(cfg, "value_coef", 0.5)
+        self.bounds_loss_coef = getattr(cfg, "bounds_loss_coef", 0.0001)
+
+        # -- Value normalization (rl_games: normalize_value) -------------------
+        # Critic outputs normalized values; we denormalize before storing in
+        # the buffer so GAE works in real reward scale. Before the update we
+        # re-normalize stored values/returns so the loss is in normalized space.
+        self.normalize_value = getattr(cfg, "normalize_value", False)
+        if self.normalize_value:
+            self.value_mean_std = RunningMeanStd((1,)).to(device)
+
+        # -- Value bootstrap (rl_games: value_bootstrap) -----------------------
+        # At truncation (timed_out), add gamma * V(s_t) to the reward so the
+        # GAE bootstrap isn't masked by the done flag.
+        self.value_bootstrap = getattr(cfg, "value_bootstrap", False)
+
+        # -- Online obs normalizer (Welford) -----------------------------------
+        self.obs_mean  = torch.zeros(obs_dim, device=device)
+        self.obs_var   = torch.ones(obs_dim, device=device)
+        self.obs_count = torch.tensor(1.0, device=device)
+
+    # -- Obs normalisation -----------------------------------------------------
+    def _update_obs_stats(self, obs):
+        batch          = obs.reshape(-1, obs.shape[-1]).detach()
+        n              = batch.shape[0]
+        new_count      = self.obs_count + n
+        new_mean       = (self.obs_count * self.obs_mean + batch.sum(0)) / new_count
+        delta_old      = batch - self.obs_mean
+        delta_new      = batch - new_mean
+        new_var        = (self.obs_var * self.obs_count + (delta_old * delta_new).sum(0)) / new_count
+        self.obs_mean  = new_mean
+        self.obs_var   = new_var.clamp(min=1e-6)
+        self.obs_count = new_count
+
+    def normalize_obs(self, obs, update_stats=False):
+        obs = obs.clamp(-100.0, 100.0)
+        if update_stats:
+            self._update_obs_stats(obs)
+        return ((obs - self.obs_mean) / (self.obs_var.sqrt() + 1e-8)).clamp(-10.0, 10.0)
+
+    # -- Rollout ---------------------------------------------------------------
+    @torch.no_grad()
+    def collect_step(self, obs):
+        action, log_prob, _, value, _ = self.network.get_action_and_value(obs)
+        # Denormalize value so the buffer stores real-scale values for GAE
+        if self.normalize_value:
+            value = self.value_mean_std.denormalize(value.unsqueeze(-1)).squeeze(-1)
+        return action, log_prob, value
+
+    def insert(self, obs, actions, rewards, dones, values, log_probs):
+        rewards = rewards * self.reward_scale
+        self.buffer.insert(obs, actions, rewards, dones, values, log_probs)
+
+    @torch.no_grad()
+    def compute_returns(self, last_obs):
+        last_value = self.network.get_value(last_obs)
+        if self.normalize_value:
+            last_value = self.value_mean_std.denormalize(
+                last_value.unsqueeze(-1)
+            ).squeeze(-1)
+        self.buffer.compute_returns_and_advantages(
+            last_value = last_value,
+            gamma = self.cfg.gamma,
+            lam   = self.cfg.lam,
+        )
+
+    def _update_lr_adaptive(self, mean_kl: float):
+        if self.lr_schedule != "adaptive":
+            return
+        if mean_kl > 2.0 * self.kl_threshold:
+            self.current_lr = max(self.current_lr / 1.5, self.lr_min)
+        elif mean_kl < 0.5 * self.kl_threshold:
+            self.current_lr = min(self.current_lr * 1.5, self.lr_max)
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = self.current_lr
+
+    # -- Update ----------------------------------------------------------------
+    def update(self):
+        # -- Pre-normalization diagnostics (real reward scale) -----------------
+        with torch.no_grad():
+            flat_values  = self.buffer.values.reshape(-1)
+            flat_returns = self.buffer.returns.reshape(-1)
+            ev         = explained_variance(flat_values, flat_returns)
+            value_mean = flat_values.mean().item()
+            value_std  = flat_values.std().item()
+            sigma_mean = self.network.log_std.exp().mean().item()
+
+        # -- Normalize value targets (rl_games convention) ---------------------
+        # Update running stats on real-scale returns, then normalize both
+        # values and returns in-place before the PPO epoch loop.
+        if self.normalize_value:
+            self.value_mean_std.update(self.buffer.returns.reshape(-1, 1))
+            self.buffer.values = self.value_mean_std.normalize(
+                self.buffer.values.unsqueeze(-1)
+            ).squeeze(-1)
+            self.buffer.returns = self.value_mean_std.normalize(
+                self.buffer.returns.unsqueeze(-1)
+            ).squeeze(-1)
+
+        total_loss    = 0.0
+        policy_loss   = 0.0
+        value_loss    = 0.0
+        entropy_loss  = 0.0
+        bounds_loss_sum = 0.0
+        approx_kl_sum = 0.0
+        clip_frac_sum = 0.0
+        num_updates   = 0
+
+        for _ in range(self.cfg.num_learning_epochs):
+            epoch_kl_sum  = 0.0
+            epoch_updates = 0
+
+            for obs, actions, old_log_probs, advantages, returns, old_values in self.buffer.get_batches(self.cfg.num_mini_batches):
+                _, new_log_probs, entropy, new_values, mu = (
+                    self.network.get_action_and_value(obs, action=actions)
+                )
+
+                # -- Policy loss -----------------------------------------------
+                ratio = (new_log_probs - old_log_probs).exp()
+
+                with torch.no_grad():
+                    approx_kl = (old_log_probs - new_log_probs).mean()
+                    clip_frac = (torch.abs(ratio - 1.0) > self.cfg.clip_param).float().mean()
+                approx_kl_sum += approx_kl.item()
+                clip_frac_sum += clip_frac.item()
+                epoch_kl_sum  += approx_kl.item()
+                epoch_updates += 1
+
+                surr1 = ratio * advantages
+                surr2 = torch.clamp(ratio, 1.0 - self.cfg.clip_param, 1.0 + self.cfg.clip_param) * advantages
+                loss_policy = -torch.min(surr1, surr2).mean()
+
+                # -- Value loss (clipped, no 0.5 factor -- donor convention) ----
+                values_clipped = old_values + torch.clamp(
+                    new_values - old_values, -self.cfg.clip_param, self.cfg.clip_param
+                )
+                loss_v_unclipped = (new_values - returns).pow(2)
+                loss_v_clipped   = (values_clipped - returns).pow(2)
+                loss_value = torch.max(loss_v_unclipped, loss_v_clipped).mean()
+
+                # -- Entropy loss ----------------------------------------------
+                loss_entropy = -entropy.mean()
+
+                # -- Bounds loss -----------------------------------------------
+                soft_bound = 1.1
+                mu_loss_high = torch.clamp_min(mu - soft_bound, 0.0) ** 2
+                mu_loss_low  = torch.clamp_max(mu + soft_bound, 0.0) ** 2
+                loss_bounds = (mu_loss_low + mu_loss_high).sum(dim=-1).mean()
+
+                loss = (
+                    loss_policy
+                    + self.value_coef * loss_value
+                    + self.cfg.entropy_coef * loss_entropy
+                    + self.bounds_loss_coef * loss_bounds
+                )
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
+                self.optimizer.step()
+
+                total_loss    += loss.item()
+                policy_loss   += loss_policy.item()
+                value_loss    += loss_value.item()
+                entropy_loss  += loss_entropy.item()
+                bounds_loss_sum += loss_bounds.item()
+                num_updates   += 1
+
+            if epoch_updates > 0:
+                self._update_lr_adaptive(epoch_kl_sum / epoch_updates)
+
+        self.buffer.reset()
+
+        return {
+            "loss/total":   total_loss    / num_updates,
+            "loss/policy":  policy_loss   / num_updates,
+            "loss/value":   value_loss    / num_updates,
+            "loss/entropy": entropy_loss  / num_updates,
+            "loss/bounds":  bounds_loss_sum / num_updates,
+            "policy/approx_kl":         approx_kl_sum / num_updates,
+            "policy/clip_fraction":     clip_frac_sum / num_updates,
+            "policy/sigma_mean":        sigma_mean,
+            "value/explained_variance": ev,
+            "value/mean":               value_mean,
+            "value/std":                value_std,
+            "train/learning_rate":      self.current_lr,
+        }
+</file>
+
+<file path="trainer.py">
+import re
+import time
+import torch
+import wandb
+from pathlib import Path
+from omegaconf import OmegaConf
+
+from manipulation.utils.logging import iter_loggable_items
+
+_EXCLUDE_FROM_ROLLOUT_AGG = {"task_episode_success_per_env"}
+
+
+class PPOTrainer:
+
+    def __init__(self, env, cfg, run_dir: Path):
+        self.env     = env
+        self.cfg     = cfg
+        self.run_dir = run_dir
+        self.device  = env.unwrapped.device
+
+        obs_dim    = env.unwrapped.single_observation_space["policy"].shape[0]
+        action_dim = env.unwrapped.single_action_space.shape[0]
+        num_envs   = cfg.num_envs
+
+        from manipulation.algos.ppo.ppo import PPO
+        self.agent = PPO(
+            obs_dim    = obs_dim,
+            action_dim = action_dim,
+            num_envs   = num_envs,
+            cfg        = cfg.algo,
+            device     = self.device,
+        )
+
+        self.ckpt_dir = run_dir / "checkpoints"
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        self._episode_return   = torch.zeros(num_envs, device=self.device)
+        self._episode_length   = torch.zeros(num_envs, dtype=torch.long, device=self.device)
+        self._last_episode_return  = torch.zeros(num_envs, device=self.device)
+        self._last_episode_length  = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._last_episode_success = torch.zeros(num_envs, device=self.device)
+        self._completions_this_iter = 0
+
+    # -- Checkpoint ------------------------------------------------------------
+
+    def save_checkpoint(self, iteration: int):
+        path = self.ckpt_dir / f"model_{iteration}.pt"
+        ckpt = {
+            "model":     self.agent.network.state_dict(),
+            "optimizer": self.agent.optimizer.state_dict(),
+            "obs_mean":  self.agent.obs_mean.cpu(),
+            "obs_var":   self.agent.obs_var.cpu(),
+            "obs_count": self.agent.obs_count.cpu(),
+            "iteration": iteration,
+        }
+        if self.agent.normalize_value:
+            ckpt["value_mean_std"] = self.agent.value_mean_std.state_dict()
+        torch.save(ckpt, path)
+        return path
+
+    def load_checkpoint(self, path: str):
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        self.agent.network.load_state_dict(ckpt["model"])
+        self.agent.optimizer.load_state_dict(ckpt["optimizer"])
+        self.agent.obs_mean  = ckpt["obs_mean"].to(self.device)
+        self.agent.obs_var   = ckpt["obs_var"].to(self.device)
+        self.agent.obs_count = ckpt["obs_count"].to(self.device)
+        if self.agent.normalize_value and "value_mean_std" in ckpt:
+            self.agent.value_mean_std.load_state_dict(ckpt["value_mean_std"])
+        return ckpt.get("iteration", 0)
+
+    # -- Training loop ---------------------------------------------------------
+
+    def run(self):
+        cfg   = self.cfg
+        agent = self.agent
+        env   = self.env
+
+        obs_dict, _ = env.reset()
+        obs = agent.normalize_obs(obs_dict["policy"], update_stats=True)
+
+        max_iter = cfg.algo.max_iterations
+
+        for iteration in range(max_iter):
+
+            rollout_log_sums  = {}
+            rollout_log_count = 0
+
+            t0 = time.time()
+            for _ in range(cfg.algo.num_steps_per_env):
+                actions, log_probs, values = agent.collect_step(obs)
+
+                obs_dict, rewards, terminated, timed_out, info = env.step(actions)
+                next_obs = obs_dict["policy"]
+
+                for k, v in iter_loggable_items(info):
+                    if k in _EXCLUDE_FROM_ROLLOUT_AGG:
+                        continue
+                    if isinstance(v, torch.Tensor):
+                        rollout_log_sums[k] = rollout_log_sums.get(k, 0.0) + float(v.mean())
+                    elif isinstance(v, float):
+                        rollout_log_sums[k] = rollout_log_sums.get(k, 0.0) + v
+                rollout_log_count += 1
+
+                # -- Value bootstrap (rl_games convention) ---------------------
+                # At truncation steps, add gamma * V(s_t) to reward so the GAE
+                # bootstrap isn't zeroed by the done mask.
+                if agent.value_bootstrap:
+                    bootstrap = cfg.algo.gamma * values.clamp(-1e4, 1e4) * timed_out.float()
+                    rewards = rewards + bootstrap
+
+                next_obs = agent.normalize_obs(next_obs, update_stats=True)
+                dones    = (terminated | timed_out).float()
+
+                # -- Episode tracking ------------------------------------------
+                self._episode_return += rewards
+                self._episode_length += 1
+                done_bool = (terminated | timed_out)
+                if done_bool.any():
+                    finished = done_bool
+                    self._last_episode_return[finished] = self._episode_return[finished]
+                    self._last_episode_length[finished] = self._episode_length[finished].float()
+                    if "task_episode_success_per_env" in info:
+                        success_per_env = info["task_episode_success_per_env"]
+                        self._last_episode_success[finished] = success_per_env[finished].float()
+                    else:
+                        self._last_episode_success[finished] = terminated[finished].float()
+                    self._episode_return[finished] = 0.0
+                    self._episode_length[finished] = 0
+                    self._completions_this_iter += int(finished.sum().item())
+
+                agent.insert(obs, actions, rewards, dones, values, log_probs)
+                obs = next_obs
+
+            rollout_elapsed = max(time.time() - t0, 1e-9)
+            sim_steps = cfg.num_envs * cfg.algo.num_steps_per_env
+            sps = sim_steps / rollout_elapsed
+
+            step_reward_mean    = agent.buffer.rewards.mean().item()
+            rollout_return_mean = agent.buffer.rewards.sum(dim=0).mean().item()
+
+            agent.compute_returns(obs)
+            losses = agent.update()
+
+            log_info = {}
+            if rollout_log_count > 0:
+                log_info = {k: v / rollout_log_count for k, v in rollout_log_sums.items()}
+
+            metrics = {
+                "rollout/step_reward_mean": step_reward_mean,
+                "rollout/return_mean":      rollout_return_mean,
+                "train/iteration":          iteration,
+                **losses,
+                **log_info,
+            }
+            metrics.update({
+                "episode/return_mean":  self._last_episode_return.mean().item(),
+                "episode/length_mean":  self._last_episode_length.mean().item(),
+                "episode/success_rate": self._last_episode_success.mean().item(),
+                "episode/completions":  self._completions_this_iter,
+                "sim/sps":             sps,
+                "sim/rollout_seconds": rollout_elapsed,
+            })
+            self._completions_this_iter = 0
+
+            wandb.log(metrics, step=iteration)
+
+            if iteration % 100 == 0:
+                print(
+                    f"[{iteration}/{max_iter}] "
+                    f"ret={rollout_return_mean:.2f} "
+                    f"rew={step_reward_mean:.4f} "
+                    f"loss={losses['loss/total']:.4f}"
+                )
+
+            if iteration % 500 == 0 and iteration > 0:
+                path = self.save_checkpoint(iteration)
+                print(f"[train] checkpoint: {path}")
+
+        path = self.save_checkpoint(max_iter)
+        print(f"[train] final model: {path}")
+</file>
+
+</files>

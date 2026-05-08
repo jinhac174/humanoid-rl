@@ -1,5 +1,5 @@
 """
-Reorient task — G1 bimanual cuboid reorientation.
+Reorient task -- G1 bimanual cuboid reorientation.
 
 Port of SAPG's Two-Arms Reorientation (isaacgymenvs AllegroKukaTwoArmsReorientation)
 adapted for the Unitree G1 + Dex3 humanoid in IsaacLab 2.3.

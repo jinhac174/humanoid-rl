@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
@@ -13,9 +11,9 @@ from manipulation.robots.g1 import G1_CFG
 import isaaclab.sim as sim_utils
 from isaaclab.assets.articulation import ArticulationCfg
 
-_ASSET_ROOT  = Path(__file__).resolve().parents[3] / "assets"
-_SCENES_DIR  = _ASSET_ROOT / "scenes"
-_OBJECTS_DIR = _ASSET_ROOT / "objects"
+from manipulation.utils.paths import ASSET_ROOT
+_SCENES_DIR  = ASSET_ROOT / "scenes"
+_OBJECTS_DIR = ASSET_ROOT / "objects"
 
 # Fixed-base config for can_push robot spawn
 _G1_CANPUSH_CFG = G1_CFG.replace(
@@ -113,7 +111,7 @@ class CanPushEnvCfg(DirectRLEnvCfg):
     can_spawn_x_range: tuple = (-0.093, 0.093)
     can_spawn_y_range: tuple = (-0.082, 0.082)
 
-    # reward weights — defaults match configs/task/can_push.yaml
+    # reward weights -- defaults match configs/task/can_push.yaml
     reward_approach_weight:  float = 3.0
     reward_push_weight:      float = 5.0
     reward_success_weight:   float = 20.0

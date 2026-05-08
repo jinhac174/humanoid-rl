@@ -1,15 +1,10 @@
 """
 Reset events for the reorient task.
 
-Phase A handles:
-    - reset_robot:   default joint pos (from G1_FIXED_CFG), zero velocity
-    - reset_objects: cuboid → spawn pose with small xy noise + random yaw
-                     goal   → random pose inside target_volume, random rotation
-    - reset_buffers: clear lifted_object, near_goal_steps, successes,
-                     closest_fingertip_dist, closest_keypoint_max_dist
-
-Phase B/C may add extra reset logic (e.g. clearing episodic reward accumulators)
-but the shape established here is stable.
+Adapted from SAPG donor (allegro_kuka_two_arms.py) reset logic:
+- Robot DoFs: uniform noise around defaults (arm and finger ranges separate)
+- Cuboid: position noise +-XY, +-Z + full random SO(3) rotation
+- Goal: random pose inside target volume with full random SO(3)
 """
 from __future__ import annotations
 
@@ -28,8 +23,6 @@ def _random_quat_wxyz(num: int, device: torch.device) -> torch.Tensor:
     Uniformly random unit quaternion in (w, x, y, z) convention.
 
     Ported from allegro_kuka_two_arms.py::get_random_quat (Marsaglia's method).
-    Avoids depending on an IsaacLab utility name that varies across 2.x minor
-    versions.
     """
     uvw = torch.rand(num, 3, device=device)
     two_pi = 2.0 * math.pi
@@ -39,23 +32,52 @@ def _random_quat_wxyz(num: int, device: torch.device) -> torch.Tensor:
     q_x = sqrt_1_mu * torch.cos(two_pi * uvw[:, 1])
     q_y = sqrt_mu * torch.sin(two_pi * uvw[:, 2])
     q_z = sqrt_mu * torch.cos(two_pi * uvw[:, 2])
-    # Stack as (w, x, y, z) — IsaacLab convention
+    # Stack as (w, x, y, z) -- IsaacLab convention
     return torch.stack([q_w, q_x, q_y, q_z], dim=-1)
 
 
 def reset_robot(env: "ReorientEnv", env_ids: torch.Tensor) -> None:
-    """Reset all joints to their default values, zero velocities."""
-    default_joint_pos = env.robot.data.default_joint_pos[env_ids]
-    default_joint_vel = env.robot.data.default_joint_vel[env_ids]
-    env.robot.write_joint_state_to_sim(
-        default_joint_pos, default_joint_vel, env_ids=env_ids
-    )
+    """Reset joints to default + noise; velocities to noise around zero.
 
-    # Fixed-base: root never moves, but we still write it to sync internal buffers.
+    Donor applies different noise magnitudes for arm vs finger joints,
+    and adds velocity noise to all DoFs. Leg joints (locked in G1_FIXED_CFG)
+    are kept at their defaults with zero velocity.
+    """
+    n = env_ids.numel()
+    cfg = env.cfg
+
+    # Start from default pose for ALL joints (including locked legs)
+    joint_pos = env.robot.data.default_joint_pos[env_ids].clone()
+    joint_vel = torch.zeros_like(joint_pos)
+
+    # Build per-actuated-joint noise coefficients
+    # actuated_joint_ids: [0:7] left arm, [7:14] right arm,
+    #                     [14:21] left hand, [21:28] right hand
+    num_actuated = len(env.actuated_joint_ids)
+    noise_coeff = torch.zeros(num_actuated, device=env.device)
+    noise_coeff[0:7] = cfg.reset_dof_pos_noise_arm
+    noise_coeff[7:14] = cfg.reset_dof_pos_noise_arm
+    noise_coeff[14:21] = cfg.reset_dof_pos_noise_finger
+    noise_coeff[21:28] = cfg.reset_dof_pos_noise_finger
+
+    # Position noise: uniform in [-coeff, +coeff] per joint
+    pos_noise = (2.0 * torch.rand(n, num_actuated, device=env.device) - 1.0) * noise_coeff
+    joint_pos[:, env.actuated_joint_ids] += pos_noise
+
+    # Velocity noise: uniform in [-vel_noise, +vel_noise] on actuated joints
+    vel_noise = (2.0 * torch.rand(n, num_actuated, device=env.device) - 1.0) * cfg.reset_dof_vel_noise
+    joint_vel[:, env.actuated_joint_ids] = vel_noise
+
+    env.robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+
+    # Fixed-base root sync
     default_root_state = env.robot.data.default_root_state[env_ids].clone()
     default_root_state[:, :3] += env.scene.env_origins[env_ids]
     env.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids=env_ids)
     env.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids=env_ids)
+
+    # Reset delta-control targets to the noisy starting positions
+    env.joint_targets[env_ids] = joint_pos[:, env.actuated_joint_ids]
 
 
 def _sample_goal_pose(
@@ -64,9 +86,6 @@ def _sample_goal_pose(
     """
     Sample a uniform random pose inside the target volume for each env in
     `env_ids`. Returns (goal_pos_w, goal_quat_w) of shape (num, 3) and (num, 4).
-
-    Used by both reset_objects (full episode reset) and reset_goal_only
-    (success-triggered mid-episode goal swap).
     """
     num = env_ids.numel()
     env_origins = env.scene.env_origins[env_ids]
@@ -82,42 +101,51 @@ def _sample_goal_pose(
 
 def reset_objects(env: "ReorientEnv", env_ids: torch.Tensor) -> None:
     """
-    Reset the cuboid to its spawn pose (with small noise) and the goal to
-    a random pose inside the target volume.
+    Reset cuboid to spawn pose with donor-level noise, and goal to a random
+    pose inside the target volume.
+
+    Donor noise: position +-0.1m XY, +-0.02m Z; full random SO(3) orientation.
     """
     num_reset = env_ids.numel()
+    cfg = env.cfg
     env_origins = env.scene.env_origins[env_ids]
 
-    # ── Cuboid ───────────────────────────────────────────────────────────────
+    # -- Cuboid ---------------------------------------------------------------
     cuboid_spawn = torch.tensor(
-        env.cfg.cuboid_spawn_pos, dtype=torch.float32, device=env.device
+        cfg.cuboid_spawn_pos, dtype=torch.float32, device=env.device
     )
-    # Small xy position noise (±1 cm) so successive episodes aren't identical.
+    # Position noise: donor uses +-resetPositionNoiseX/Y/Z
     pos_noise = torch.zeros(num_reset, 3, device=env.device)
-    pos_noise[:, :2] = (torch.rand(num_reset, 2, device=env.device) - 0.5) * 0.02
+    pos_noise[:, 0] = (2.0 * torch.rand(num_reset, device=env.device) - 1.0) * cfg.reset_position_noise_x
+    pos_noise[:, 1] = (2.0 * torch.rand(num_reset, device=env.device) - 1.0) * cfg.reset_position_noise_y
+    pos_noise[:, 2] = (2.0 * torch.rand(num_reset, device=env.device) - 1.0) * cfg.reset_position_noise_z
     cuboid_pos_w = cuboid_spawn.unsqueeze(0) + pos_noise + env_origins
 
-    # Random yaw around world-z so the cuboid doesn't always start axis-aligned.
-    # (Phase A: small rotation only; Phase C will use full random_orientation.)
-    yaw = (torch.rand(num_reset, device=env.device) - 0.5) * 0.6  # ±0.3 rad
-    half = 0.5 * yaw
-    cuboid_quat_w = torch.stack(
-        [torch.cos(half), torch.zeros_like(half), torch.zeros_like(half), torch.sin(half)],
-        dim=-1,
-    )  # (w, x, y, z)
+    # Rotation: full random SO(3) when reset_rotation_noise >= 1.0
+    if cfg.reset_rotation_noise >= 1.0:
+        cuboid_quat_w = _random_quat_wxyz(num_reset, device=env.device)
+    else:
+        # Partial rotation noise: random yaw scaled by noise factor
+        yaw = (torch.rand(num_reset, device=env.device) - 0.5) * (
+            2.0 * math.pi * cfg.reset_rotation_noise
+        )
+        half = 0.5 * yaw
+        cuboid_quat_w = torch.stack(
+            [torch.cos(half), torch.zeros_like(half),
+             torch.zeros_like(half), torch.sin(half)],
+            dim=-1,
+        )
 
     cuboid_state = torch.zeros(num_reset, 13, device=env.device)
     cuboid_state[:, 0:3] = cuboid_pos_w
     cuboid_state[:, 3:7] = cuboid_quat_w
-    # linear + angular velocities stay zero
     env.cuboid.write_root_pose_to_sim(cuboid_state[:, 0:7], env_ids=env_ids)
     env.cuboid.write_root_velocity_to_sim(cuboid_state[:, 7:13], env_ids=env_ids)
 
-    # Record the cuboid's world-frame initial position so the lift latch in
-    # rewards._lifting_reward can reference it: z_lift = object_z - object_init_z.
+    # Record init pos for lift calculation
     env.object_init_pos_w[env_ids] = cuboid_pos_w
 
-    # ── Goal ─────────────────────────────────────────────────────────────────
+    # -- Goal -----------------------------------------------------------------
     goal_pos_w, goal_quat_w = _sample_goal_pose(env, env_ids)
     goal_state = torch.zeros(num_reset, 13, device=env.device)
     goal_state[:, 0:3] = goal_pos_w
@@ -128,13 +156,8 @@ def reset_objects(env: "ReorientEnv", env_ids: torch.Tensor) -> None:
 
 def reset_goal_only(env: "ReorientEnv", env_ids: torch.Tensor) -> None:
     """
-    Resample only the goal pose for the given envs (NOT the cuboid, NOT the
-    robot). Called from _pre_physics_step when an env has hit a success on
-    the previous step. Donor equivalent: reset_target_pose.
-
-    Note: near_goal_steps and closest_keypoint_max_dist for these envs were
-    already cleared in _get_dones at the moment of success detection, so this
-    function only writes the new goal pose to sim.
+    Resample only the goal pose (NOT the cuboid, NOT the robot).
+    Called from _pre_physics_step on the step after a success.
     """
     num = env_ids.numel()
     goal_pos_w, goal_quat_w = _sample_goal_pose(env, env_ids)

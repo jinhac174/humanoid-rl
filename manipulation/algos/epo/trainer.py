@@ -1,34 +1,40 @@
-import re
+"""
+EPO Trainer.
+
+Same rollout + augment + update flow as SAPG, plus:
+    - Records episode completions for per-block fitness tracking
+    - Calls maybe_apply_ga() once per iteration, after the update
+    - Logs GA diagnostics to wandb
+"""
 import time
 import torch
 import wandb
 from pathlib import Path
-from omegaconf import OmegaConf
 
+from manipulation.algos.epo.epo import EPO
 from manipulation.utils.logging import iter_loggable_items
 
 _EXCLUDE_FROM_ROLLOUT_AGG = {"task_episode_success_per_env"}
 
 
-class PPOTrainer:
+class EPOTrainer:
 
     def __init__(self, env, cfg, run_dir: Path):
-        self.env     = env
-        self.cfg     = cfg
+        self.env = env
+        self.cfg = cfg
         self.run_dir = run_dir
-        self.device  = env.unwrapped.device
+        self.device = env.unwrapped.device
 
-        obs_dim    = env.unwrapped.single_observation_space["policy"].shape[0]
+        obs_dim = env.unwrapped.single_observation_space["policy"].shape[0]
         action_dim = env.unwrapped.single_action_space.shape[0]
-        num_envs   = cfg.num_envs
+        num_envs = cfg.num_envs
 
-        from manipulation.algos.ppo.ppo import PPO
-        self.agent = PPO(
-            obs_dim    = obs_dim,
-            action_dim = action_dim,
-            num_envs   = num_envs,
-            cfg        = cfg.algo,
-            device     = self.device,
+        self.agent = EPO(
+            obs_dim=obs_dim,
+            action_dim=action_dim,
+            num_envs=num_envs,
+            cfg=cfg.algo,
+            device=self.device,
         )
 
         self.ckpt_dir = run_dir / "checkpoints"
@@ -41,17 +47,22 @@ class PPOTrainer:
         self._last_episode_success = torch.zeros(num_envs, device=self.device)
         self._completions_this_iter = 0
 
-    # -- Checkpoint ------------------------------------------------------------
+    # -- Checkpoint --
 
     def save_checkpoint(self, iteration: int):
         path = self.ckpt_dir / f"model_{iteration}.pt"
         ckpt = {
-            "model":     self.agent.network.state_dict(),
+            "model": self.agent.network.state_dict(),
             "optimizer": self.agent.optimizer.state_dict(),
-            "obs_mean":  self.agent.obs_mean.cpu(),
-            "obs_var":   self.agent.obs_var.cpu(),
+            "obs_mean": self.agent.obs_mean.cpu(),
+            "obs_var": self.agent.obs_var.cpu(),
             "obs_count": self.agent.obs_count.cpu(),
             "iteration": iteration,
+            # EPO-specific state: fitness buffer so GA state survives restart
+            "fitness_buffer": self.agent.fitness_tracker.buffer.cpu(),
+            "fitness_write_idx": self.agent.fitness_tracker.write_idx.cpu(),
+            "iter_count": self.agent._iter_count,
+            "last_ga_iter": self.agent._last_ga_iter,
         }
         if self.agent.normalize_value:
             ckpt["value_mean_std"] = self.agent.value_mean_std.state_dict()
@@ -62,63 +73,76 @@ class PPOTrainer:
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.agent.network.load_state_dict(ckpt["model"])
         self.agent.optimizer.load_state_dict(ckpt["optimizer"])
-        self.agent.obs_mean  = ckpt["obs_mean"].to(self.device)
-        self.agent.obs_var   = ckpt["obs_var"].to(self.device)
+        self.agent.obs_mean = ckpt["obs_mean"].to(self.device)
+        self.agent.obs_var = ckpt["obs_var"].to(self.device)
         self.agent.obs_count = ckpt["obs_count"].to(self.device)
         if self.agent.normalize_value and "value_mean_std" in ckpt:
             self.agent.value_mean_std.load_state_dict(ckpt["value_mean_std"])
+        # EPO-specific restore
+        if "fitness_buffer" in ckpt:
+            self.agent.fitness_tracker.buffer = ckpt["fitness_buffer"].to(self.device)
+            self.agent.fitness_tracker.write_idx = ckpt["fitness_write_idx"].to(self.device)
+            self.agent._iter_count = ckpt.get("iter_count", 0)
+            self.agent._last_ga_iter = ckpt.get("last_ga_iter", -1)
         return ckpt.get("iteration", 0)
 
-    # -- Training loop ---------------------------------------------------------
+    # -- Training loop --
 
     def run(self, start_iteration=0):
-        cfg   = self.cfg
+        cfg = self.cfg
         agent = self.agent
-        env   = self.env
+        env = self.env
 
         obs_dict, _ = env.reset()
-        obs = agent.normalize_obs(obs_dict["policy"], update_stats=True)
+        obs_raw = obs_dict["policy"]
+        obs_norm = agent.normalize_obs(obs_raw, update_stats=True)
 
         max_iter = cfg.algo.max_iterations
 
         for iteration in range(start_iteration, max_iter):
 
-            rollout_log_sums  = {}
+            rollout_log_sums = {}
             rollout_log_count = 0
 
             t0 = time.time()
             for _ in range(cfg.algo.num_steps_per_env):
-                actions, log_probs, values = agent.collect_step(obs)
+                net_input = agent.build_network_input(obs_norm)
+                actions, log_probs, values, mus, sigmas = agent.collect_step(net_input)
 
                 obs_dict, rewards, terminated, timed_out, info = env.step(actions)
-                next_obs = obs_dict["policy"]
+                next_obs_raw = obs_dict["policy"]
 
                 for k, v in iter_loggable_items(info):
                     if k in _EXCLUDE_FROM_ROLLOUT_AGG:
                         continue
                     if isinstance(v, torch.Tensor):
-                        rollout_log_sums[k] = rollout_log_sums.get(k, 0.0) + float(v.mean())
+                        rollout_log_sums[k] = rollout_log_sums.get(k, 0.0) + float(
+                            v.mean()
+                        )
                     elif isinstance(v, float):
                         rollout_log_sums[k] = rollout_log_sums.get(k, 0.0) + v
                 rollout_log_count += 1
 
-                # -- Value bootstrap (rl_games convention) ---------------------
-                # At truncation steps, add gamma * V(s_t) to reward so the GAE
-                # bootstrap isn't zeroed by the done mask.
+                # Value bootstrap
                 rewards = rewards * agent.reward_scale
                 if agent.value_bootstrap:
                     bootstrap = cfg.algo.gamma * values.clamp(-1e4, 1e4) * timed_out.float()
                     rewards = rewards + bootstrap
 
-                next_obs = agent.normalize_obs(next_obs, update_stats=True)
-                dones    = (terminated | timed_out).float()
+                dones = (terminated | timed_out).float()
 
-                # -- Episode tracking ------------------------------------------
+                # Episode tracking (same as SAPG)
                 self._episode_return += rewards
                 self._episode_length += 1
                 done_bool = (terminated | timed_out)
                 if done_bool.any():
                     finished = done_bool
+                    # Snapshot returns BEFORE we zero them, for EPO fitness
+                    env_ids_done = done_bool.nonzero(as_tuple=False).squeeze(-1)
+                    returns_done = self._episode_return[env_ids_done].clone()
+                    # Feed into EPO fitness tracker
+                    agent.record_episode_completions(env_ids_done, returns_done)
+
                     self._last_episode_return[finished] = self._episode_return[finished]
                     self._last_episode_length[finished] = self._episode_length[finished].float()
                     if "task_episode_success_per_env" in info:
@@ -130,29 +154,45 @@ class PPOTrainer:
                     self._episode_length[finished] = 0
                     self._completions_this_iter += int(finished.sum().item())
 
-                agent.insert(obs, actions, rewards, dones, values, log_probs)
-                obs = next_obs
+                agent.insert(
+                    obs_raw, actions, rewards, dones, values, log_probs,
+                    mus.detach(), sigmas.detach(),
+                )
+
+                obs_raw = next_obs_raw
+                obs_norm = agent.normalize_obs(obs_raw, update_stats=True)
 
             rollout_elapsed = max(time.time() - t0, 1e-9)
             sim_steps = cfg.num_envs * cfg.algo.num_steps_per_env
             sps = sim_steps / rollout_elapsed
 
-            step_reward_mean    = agent.buffer.rewards.mean().item()
+            step_reward_mean = agent.buffer.rewards.mean().item()
             rollout_return_mean = agent.buffer.rewards.sum(dim=0).mean().item()
 
-            agent.compute_returns(obs)
-            losses = agent.update()
+            agent.compute_returns(obs_raw)
+
+            with torch.no_grad():
+                flat_batch = agent.buffer.get_flat_batch()
+                augmented_batch = agent.augment_batch(flat_batch)
+
+            losses = agent.update(augmented_batch)
+
+            # EPO: apply GA after the update (once per iteration)
+            ga_info = agent.maybe_apply_ga()
 
             log_info = {}
             if rollout_log_count > 0:
-                log_info = {k: v / rollout_log_count for k, v in rollout_log_sums.items()}
+                log_info = {
+                    k: v / rollout_log_count for k, v in rollout_log_sums.items()
+                }
 
             metrics = {
                 "rollout/step_reward_mean": step_reward_mean,
-                "rollout/return_mean":      rollout_return_mean,
-                "train/iteration":          iteration,
+                "rollout/return_mean": rollout_return_mean,
+                "train/iteration": iteration,
                 **losses,
                 **log_info,
+                **ga_info,
             }
             metrics.update({
                 "episode/return_mean":  self._last_episode_return.mean().item(),
@@ -167,11 +207,15 @@ class PPOTrainer:
             wandb.log(metrics, step=iteration)
 
             if iteration % 100 == 0:
+                ga_str = ""
+                if ga_info["epo/ga_applied"]:
+                    ga_str = f" [GA! mutated {ga_info['epo/num_mutated']} blocks]"
                 print(
                     f"[{iteration}/{max_iter}] "
                     f"ret={rollout_return_mean:.2f} "
                     f"rew={step_reward_mean:.4f} "
                     f"loss={losses['loss/total']:.4f}"
+                    f"{ga_str}"
                 )
 
             if iteration % 500 == 0 and iteration > 0:

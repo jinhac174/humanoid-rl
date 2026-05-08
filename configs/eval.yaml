@@ -1,18 +1,23 @@
 defaults:
   - task: ???
-  - algo: ppo
-  - sim: default
   - _self_
 
-headless: false
-seed: 0
-num_envs: 1
+checkpoint: ???
 
 num_episodes: 3
 deterministic: true
 video_fps: 30
 video_width: 1280
 video_height: 720
+
+# Eval success criteria (tighter than training)
+eval_success_tolerance: 0.04
+eval_success_steps: 40
+hold_frames: 90
+
+# Rendering quality
+raytraced: false    # true for publication quality (much slower)
+spp: 64             # samples per pixel for ray-tracing (16=fast, 64=good, 128=best)
 
 hydra:
   run:

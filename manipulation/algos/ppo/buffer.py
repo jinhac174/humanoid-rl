@@ -33,7 +33,7 @@ class RolloutBuffer:
         """
         GAE-Lambda advantage estimation.
         FIX: next_not_done uses dones[t] not dones[t+1].
-        dones[t] marks that the episode ended at step t —
+        dones[t] marks that the episode ended at step t --
         the bootstrap must be cut at t, not t+1.
         """
         last_gae = 0.0

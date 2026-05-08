@@ -1,0 +1,42 @@
+# EPO = SAPG machinery + Genetic Algorithm on latent embeddings.
+# Inherits all SAPG/PPO settings via the defaults chain, overrides name,
+# and adds EPO-specific GA hyperparameters.
+defaults:
+  - sapg
+  - _self_
+
+name: epo
+
+# -- GA hyperparameters (Paper Appendix B.2, Manipulation Tasks) --
+# Trigger: apply GA only when
+#     max(f) - min(f) > ga_trigger_gamma * median(f)
+# This prevents premature selection when all policies are still close to 0.
+ga_trigger_gamma: 0.3
+
+# Mutation noise std: phi'' = phi' + N(0, mutation_sigma^2)
+# Paper does not specify exact value; 0.1 is a reasonable default for
+# embeddings of scale ~O(1). Tune up if policies collapse (lose diversity),
+# tune down if training becomes unstable.
+mutation_sigma: 0.1
+
+# Number of elites preserved unchanged. Paper uses x = K - 2 (keep all but 2,
+# replace the 2 worst with crossover-mutated children).
+# With num_blocks=6, this means keep 4 elites, replace 2.
+# Computed at runtime as: num_elites = num_blocks - 2
+# (Set here explicitly for clarity; -1 means "use K-2 default")
+num_elites: -1
+
+# Fitness evaluation window: use mean episodic return over the last N
+# completed episodes per agent/block. Paper uses cumulative reward from one
+# episode; we use a moving average to reduce variance (sensible default).
+fitness_window: 32
+
+# Minimum iterations between GA applications. Even if the trigger condition
+# is met, we wait this many iterations between GA events to avoid thrashing.
+# Paper: "apply selection, crossover, and mutation at fixed intervals", 
+# default here is every 10 iterations.
+ga_min_interval: 10
+
+# Skip GA for the first N iterations to give policies time to differentiate.
+# Without this, early fitness scores are all near zero and GA is noise.
+ga_warmup_iterations: 50

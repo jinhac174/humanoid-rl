@@ -67,11 +67,11 @@ def get_obs(env: DirectRLEnv, joint_ids: list[int]) -> torch.Tensor:
     [0:28]    joint_pos
     [28:56]   joint_vel
     [56:84]   target_error
-    [84:87]   can_pos          — relative to robot root
-    [87:90]   can_lin_vel      — world frame
-    [90:93]   target_pos       — relative to robot root (fixed)
-    [93:96]   left_palm_pos    — relative to robot root
-    [96:99]   right_palm_pos   — relative to robot root
+    [84:87]   can_pos          -- relative to robot root
+    [87:90]   can_lin_vel      -- world frame
+    [90:93]   target_pos       -- relative to robot root (fixed)
+    [93:96]   left_palm_pos    -- relative to robot root
+    [96:99]   right_palm_pos   -- relative to robot root
     [99:102]  can_to_left_palm
     [102:105] can_to_right_palm
     [105:108] can_to_target

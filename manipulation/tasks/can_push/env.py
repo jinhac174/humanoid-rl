@@ -65,7 +65,7 @@ class CanPushEnv(DirectRLEnv):
         self.actuated_joint_lower = lower.to(self.device).unsqueeze(0)
         self.actuated_joint_upper = upper.to(self.device).unsqueeze(0)
 
-        # ── Target position — fixed, read from scene config ───────────────────
+        # ── Target position -- fixed, read from scene config ───────────────────
         # Target is a static visual USD. It never moves so we store its
         # world position as a constant tensor. No runtime asset interaction needed.
         tp = cfg.scene.target.init_state.pos
@@ -89,7 +89,7 @@ class CanPushEnv(DirectRLEnv):
         self.robot = Articulation(self.cfg.scene.robot)
         self.can   = RigidObject(self.cfg.scene.can)
         # target is spawned by InteractiveScene automatically via AssetBaseCfg
-        # we do not instantiate it here — position is stored as a constant tensor
+        # we do not instantiate it here -- position is stored as a constant tensor
 
         self.left_hand_contact  = ContactSensor(self.cfg.scene.left_hand_contact)
         self.right_hand_contact = ContactSensor(self.cfg.scene.right_hand_contact)
@@ -193,5 +193,11 @@ class CanPushEnv(DirectRLEnv):
             "done/timeout_rate":   timed_out.float().mean().item(),
             "done/terminated_rate":terminated.float().mean().item(),
         })
+
+        # Per-env success indicator for trainer episode stats. Flat key (not
+        # under extras["log"]) so the trainer reads it as a tensor. On steps
+        # where an env terminates via drop, success=False → 0.0; via success,
+        # success=True → 1.0. Excluded from rollout mean aggregation.
+        self.extras["task_episode_success_per_env"] = success.float()
 
         return terminated, timed_out

@@ -1,18 +1,20 @@
 defaults:
   - task: ???
   - algo: ppo
-  - sim: default
   - _self_
 
 headless: true
 seed: 42
 num_envs: 4096
 
+checkpoint: null    # path to checkpoint for resuming training
+
 log_root: /scratch2/danielc174/humanoid-manipulation/outputs
 
 wandb:
   project: humanoid-manipulation
   mode: disabled
+  notes: ""
 
 hydra:
   run:

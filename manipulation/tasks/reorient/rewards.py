@@ -1,5 +1,5 @@
 """
-Reward terms for the reorient task — Phase C.
+Reward terms for the reorient task -- Phase C.
 
 Direct port of SAPG's `compute_kuka_reward` and helpers from
 `isaacgymenvs/tasks/allegro_kuka/allegro_kuka_two_arms.py`. The two-arms
@@ -61,7 +61,7 @@ def _lifting_reward(env: "ReorientEnv") -> tuple[torch.Tensor, torch.Tensor]:
 
     # Latch update + rising-edge detection. The "& ~prev_latch" check is
     # the whole reason lifted_object MUST be updated here, not in
-    # compute_task_state — we need the pre-update value to detect the edge.
+    # compute_task_state -- we need the pre-update value to detect the edge.
     lifted_now = (z_lift > env.cfg.lifting_bonus_threshold) | env.lifted_object
     just_lifted = lifted_now & ~env.lifted_object
     lift_bonus_rew = env.cfg.lifting_bonus * just_lifted.float()
@@ -109,7 +109,7 @@ def _keypoint_reward(
 
     Same shape as _distance_delta_rewards but on keypoints_max_dist (the L∞
     distance over the 4 keypoints between object and goal). The gating means
-    the agent gets zero keypoint reward until it has lifted the cube — this
+    the agent gets zero keypoint reward until it has lifted the cube -- this
     blocks the degenerate "slide on table" strategy.
 
     Side effect: updates env.closest_keypoint_max_dist to the running min.
@@ -176,7 +176,7 @@ def compute_reward(env: "ReorientEnv") -> torch.Tensor:
     extras["reward/bonus"] = bonus_rew
     extras["reward/total"] = reward
 
-    # Task diagnostics — what's actually happening in the scene each step.
+    # Task diagnostics -- what's actually happening in the scene each step.
     extras["task/lifted_frac"] = env.lifted_object.float()
     extras["task/near_goal_frac"] = env.near_goal.float()
     extras["task/successes_cum"] = env.successes

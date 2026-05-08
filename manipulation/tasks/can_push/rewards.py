@@ -54,7 +54,7 @@ def penalty_drop(env: DirectRLEnv, drop_threshold: float = 0.08) -> torch.Tensor
 
 
 def penalty_right_idle(env: DirectRLEnv) -> torch.Tensor:
-    """Keep right arm parked — always active for push task."""
+    """Keep right arm parked -- always active for push task."""
     joint_pos = env.robot.data.joint_pos[:, env.actuated_joint_ids]
     joint_vel = env.robot.data.joint_vel[:, env.actuated_joint_ids]
     right_pos     = joint_pos[:, env.right_arm_slice]

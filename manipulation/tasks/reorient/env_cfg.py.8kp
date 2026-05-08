@@ -1,5 +1,16 @@
 # Reorient task -- fixed-base G1 bimanual cuboid reorientation.
 # Port of SAPG Two-Arms Reorientation task (isaacgymenvs AllegroKukaTwoArmsReorientation).
+#
+# 8-keypoint variant: uses ALL 8 cube corners for the orientation reward instead
+# of the donor's 4 diagonal corners. The 4-diagonal scheme is invariant under
+# 180-degree rotations about the cube's body axes (the corner pairs map to each
+# other, leaving keypoints_max_dist non-zero but small), which lets the policy
+# converge to a "180-degree cheat" pose at ~0.20 keypoints_max_dist that clears
+# the loose tolerance threshold but isn't actually correct.
+#
+# All 8 corners are only invariant under the identity rotation, so the reward
+# signal goes to zero ONLY at true orientation alignment. Obs dim grows from
+# 108 -> 120 (12 extra dims for the 4 additional keypoint deltas).
 from __future__ import annotations
 from pathlib import Path
 
@@ -30,6 +41,11 @@ RIGHT_FINGERTIP_BODIES = [
 ]
 NUM_FINGERTIPS_PER_HAND = 3
 NUM_ARMS = 2
+
+# --- Keypoint count ---
+# 8 cube corners: only the identity rotation leaves the corner-to-corner
+# correspondence invariant. This breaks the 180-degree symmetry cheat.
+NUM_KEYPOINTS = 8
 
 # --- Scene layout constants (meters, world frame) ---
 TABLE_SIZE = (1.0, 1.0, 0.78)
@@ -165,7 +181,9 @@ class ReorientEnvCfg(DirectRLEnvCfg):
     decimation: int = 5  # 200 Hz sim / 5 = 40 Hz control
     episode_length_s: float = 10.0  # donor: 600 steps @ 60 Hz = 10 s
 
-    observation_space = Box(low=-np.inf, high=np.inf, shape=(108,))
+    # 8 keypoints * 3 dims = 24 (was 12 with 4 keypoints), so total obs = 120 (was 108).
+    # Layout: 28+28+3+4+3+4+6+18+24+1+1 = 120
+    observation_space = Box(low=-np.inf, high=np.inf, shape=(120,))
     state_space = 0
     action_space = Box(low=-1.0, high=1.0, shape=(28,))
 

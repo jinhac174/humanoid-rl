@@ -9,10 +9,10 @@ from isaaclab.app import AppLauncher
 app_launcher = AppLauncher(headless=True)
 simulation_app = app_launcher.app
 
-from pathlib import Path
 from pxr import Usd, UsdGeom, UsdPhysics, Gf
 
-ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "objects" / "insert"
+from manipulation.utils.paths import ASSET_ROOT
+ASSET_DIR = ASSET_ROOT / "objects" / "insert"
 ASSET_DIR.mkdir(parents=True, exist_ok=True)
 
 

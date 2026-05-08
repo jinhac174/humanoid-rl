@@ -1,5 +1,5 @@
 """
-Termination conditions for the reorient task — Phase C.
+Termination conditions for the reorient task -- Phase C.
 
 Donor (`_compute_resets` in allegro_kuka_two_arms.py) has three reset triggers:
 

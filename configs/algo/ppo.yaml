@@ -1,17 +1,37 @@
 name: ppo
-max_iterations: 10000
+max_iterations: 70000
 
+# ── Network (donor LSTM: MLP [768,512,256] → LSTM(768) → heads) ──────────────
+# MLP fallback (used when use_lstm: false)
+shared: true
+hidden_dims: [1024, 1024, 512, 512]
+activation: elu
+init_noise_std: 1.0       # donor: sigma_init val=0 → log_std=0 → std=exp(0)=1.0
+use_tanh: false            # donor: mu_activation=None (no output squashing)
+
+# Fallback for shared=false (e.g. can_push's old config)
 actor_hidden_dims: [512, 256, 128]
 critic_hidden_dims: [512, 256, 128]
-activation: elu
-init_noise_std: 0.15
 
+# ── Optimization ─────────────────────────────────────────────────────────────
 learning_rate: 1.0e-4
-num_steps_per_env: 64
-num_mini_batches: 4
-num_learning_epochs: 5
+num_steps_per_env: 16     # donor: horizon_length=16
+num_mini_batches: 4       # donor: 131072/32768=4
+num_learning_epochs: 4    # donor: mini_epochs=4 (MLP); 2 for LSTM
+lr_schedule: adaptive     # 'adaptive' (KL-controller) or 'fixed'
+kl_threshold: 0.016       # donor: AllegroKukaPPO.yaml kl_threshold=0.016
+lr_min: 1.0e-6
+lr_max: 1.0e-2
 
+# ── PPO ──────────────────────────────────────────────────────────────────────
 gamma: 0.99
-lam: 0.95
-entropy_coef: 0.025
-clip_param: 0.2
+lam: 0.95                 # donor: tau=0.95
+entropy_coef: 0.0         # donor: entropy_coef=0.0
+clip_param: 0.1           # donor: e_clip=0.1
+value_coef: 4.0           # donor: critic_coef=4.0
+reward_scale: 0.01        # donor: reward_shaper.scale_value=0.01
+bounds_loss_coef: 0.0001  # soft action-bounds penalty
+
+# ── rl_games parity ──────────────────────────────────────────────────────────
+normalize_value: true      # RunningMeanStd on critic targets (donor: normalize_value=True)
+value_bootstrap: true      # truncation correction: gamma*V*timed_out added to reward
