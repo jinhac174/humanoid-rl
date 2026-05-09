@@ -9,7 +9,7 @@ activation: elu
 init_noise_std: 1.0       # donor: sigma_init val=0 → log_std=0 → std=exp(0)=1.0
 use_tanh: false            # donor: mu_activation=None (no output squashing)
 
-# Fallback for shared=false (e.g. can_push's old config)
+# Used when shared=false (separate actor and critic MLPs)
 actor_hidden_dims: [512, 256, 128]
 critic_hidden_dims: [512, 256, 128]
 

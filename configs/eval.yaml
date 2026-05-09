@@ -1,3 +1,6 @@
+# Generic eval config. Task-specific eval overrides (success_tolerance,
+# hold_frames, episode_length_s, ...) live under ``eval:`` in
+# ``configs/task/<task>.yaml`` and are consumed by the per-task evaluator.
 defaults:
   - task: ???
   - _self_
@@ -6,18 +9,15 @@ checkpoint: ???
 
 num_episodes: 3
 deterministic: true
+
+# Video output
 video_fps: 30
 video_width: 1280
 video_height: 720
 
-# Eval success criteria (tighter than training)
-eval_success_tolerance: 0.04
-eval_success_steps: 40
-hold_frames: 90
-
 # Rendering quality
-raytraced: false    # true for publication quality (much slower)
-spp: 64             # samples per pixel for ray-tracing (16=fast, 64=good, 128=best)
+raytraced: false    # true = path tracing (publication quality, much slower)
+spp: 64             # samples per pixel for path tracing (16=fast, 64=good, 128=best)
 
 hydra:
   run:

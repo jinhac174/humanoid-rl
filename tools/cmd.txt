@@ -1,25 +1,31 @@
+# ── Scene preview ─────────────────────────────────────────────────────────────
 ~/IsaacLab/isaaclab.sh -p scripts/scene_load.py task=reorient
 
-
-
+# ── Train ─────────────────────────────────────────────────────────────────────
 # PPO
-~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=ppo num_envs=8160 ++task.enable_curriculum=true wandb.mode=online
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=ppo \
+    num_envs=8160 ++task.enable_curriculum=true wandb.mode=online
 
-# SAPG-6
-~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=sapg num_envs=8160 ++task.enable_curriculum=true wandb.mode=online
+# SAPG (6 blocks)
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=sapg \
+    num_envs=8160 ++task.enable_curriculum=true wandb.mode=online
 
-# EPO-8
-~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=epo num_envs=8160 algo.num_blocks=8 ++task.enable_curriculum=true wandb.mode=online
+# EPO (8 blocks)
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=epo \
+    num_envs=8160 algo.num_blocks=8 ++task.enable_curriculum=true wandb.mode=online
 
-
-
+# ── Eval ──────────────────────────────────────────────────────────────────────
+# Default eval (rasterization, 1280x720, eval-time tolerance/hold from task yaml)
 ~/IsaacLab/isaaclab.sh -p scripts/eval.py task=reorient \
-  checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_22000.pt \
-  ++task.success_tolerance=0.02 ++task.success_steps=120
+    checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_21000.pt
 
+# Override eval-time tolerance / hold from CLI
 ~/IsaacLab/isaaclab.sh -p scripts/eval.py task=reorient \
-  checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_21000.pt
+    checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_22000.pt \
+    ++task.eval.success_tolerance=0.02 \
+    ++task.eval.success_steps=120
 
+# Publication quality (path-traced, 1080p)
 ~/IsaacLab/isaaclab.sh -p scripts/eval.py task=reorient \
-checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_22000.pt \
-++task.success_steps=120
+    checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_22000.pt \
+    raytraced=true video_width=1920 video_height=1080

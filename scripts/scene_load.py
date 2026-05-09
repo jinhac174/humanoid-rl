@@ -2,7 +2,7 @@
 Universal scene loader — headless, saves one frame per camera.
 
 Usage:
-    ~/IsaacLab/isaaclab.sh -p scripts/scene_load.py task=can_push
+    ~/IsaacLab/isaaclab.sh -p scripts/scene_load.py task=reorient
 """
 import importlib
 import numpy as np
@@ -22,13 +22,18 @@ def main(cfg: DictConfig):
     simulation_app = app_launcher.app
 
     import gymnasium as gym
-    import manipulation.tasks
+    import tasks
 
     save_dir = Path(cfg.log_root) / "scene_load" / cfg.task.log_name
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    SCRIPT_KEYS = {"gym_id", "log_name", "env_cfg_module", "env_cfg_class",
-                   "cameras", "viewer"}
+    SCRIPT_KEYS = {
+        "gym_id", "log_name",
+        "env_cfg_module", "env_cfg_class",
+        "evaluator_module", "evaluator_class",
+        "cameras", "viewer",
+        "eval",
+    }
 
     cameras = cfg.task.cameras
     first_cam = next(iter(cameras.values()))

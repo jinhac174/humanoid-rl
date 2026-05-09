@@ -1,154 +1,187 @@
-# Humanoid Manipulation
+# Humanoid RL — G1
 
-Reinforcement learning for G1 humanoid robot manipulation tasks using IsaacLab.
+Reinforcement learning on the Unitree G1 humanoid using IsaacLab. Manipulation
+tasks (fixed-base) live under `manipulation/`; locomotion will land under
+`locomotion/`. Algorithms (`algos/`), evaluator base (`evaluators/`),
+robot configs (`robots/`), and shared utilities (`utils/`) sit at the top
+level so both task domains share them.
 
 ## Environment
 
-- **Robot**: Unitree G1 with Dex3 hands (fixed-base)
+- **Robot**: Unitree G1 with Dex3 hands. Manipulation runs fixed-base with
+  legs+waist pinned via high-stiffness implicit actuators (only the upper
+  body is in the action space, 28 DoF). Locomotion will switch to
+  free-floating root with the legs+waist as real actuators.
 - **Simulator**: IsaacLab 2.3.2 / Isaac Sim 4.5
 - **Cluster**: Yonsei HPC, SLURM, Singularity SIF container
-- **Algorithms**: PPO (custom, with GAE / value clipping / online obs normalization), SAPG (per-block entropy conditioning); EPO planned
+- **Algorithms**: PPO (custom, with GAE / value clipping / online obs
+  normalization), SAPG (per-block conditioning + leader-follower batch
+  augmentation), EPO (SAPG + genetic algorithm on latent embeddings)
 
 ## Project Structure
 
 ```
-humanoid-manipulation/
+humanoid-rl/
+├── algos/                              # Shared trainers + agents
+│   ├── ppo/
+│   │   ├── buffer.py                   # RolloutBuffer with GAE
+│   │   ├── network.py                  # ActorCritic MLP
+│   │   ├── ppo.py                      # PPO update + obs normalization
+│   │   └── trainer.py                  # Training loop, checkpointing, W&B
+│   ├── sapg/                           # SAPG = PPO + per-block conditioning
+│   └── epo/                            # EPO = SAPG + genetic algorithm
+├── evaluators/                         # Shared eval framework
+│   ├── base.py                         # BaseEvaluator (default eval loop)
+│   └── utils.py                        # Frame capture, ckpt → policy reconstruction
+├── robots/
+│   └── g1.py                           # G1_FIXED_CFG (manipulation), G1_FREE_CFG (locomotion: TODO)
+├── utils/
+│   ├── paths.py                        # PROJECT_ROOT, ASSET_ROOT
+│   ├── logging.py                      # explained_variance, iter_loggable_items
+│   └── normalization.py                # RunningMeanStd for value targets
 ├── manipulation/
-│   ├── robots/
-│   │   └── g1.py                  # G1_CFG, G1_FIXED_CFG, actuator physics, action scales
-│   ├── tasks/
-│   │   ├── can_push/              # Push can into target region
-│   │   │   ├── env_cfg.py         # Scene + env config, reward/penalty weight fields
-│   │   │   ├── env.py             # DirectRLEnv subclass, wires all components
-│   │   │   ├── observations.py    # 108-dim obs vector
-│   │   │   ├── rewards.py         # Reward + penalty functions
-│   │   │   ├── terminations.py    # Success, drop, timeout
-│   │   │   └── events.py          # Reset logic
-│   │   └── reorient/              # Reorient object to target pose
-│   │       └── (same structure as can_push)
-│   ├── algos/
-│   │   ├── ppo/
-│   │   │   ├── buffer.py          # RolloutBuffer with GAE
-│   │   │   ├── network.py         # ActorCritic MLP
-│   │   │   ├── ppo.py             # PPO update + obs normalization
-│   │   │   └── trainer.py         # Training loop, checkpointing, W&B logging
-│   │   └── sapg/
-│   │       ├── network.py         # ActorCritic with per-block conditioning
-│   │       ├── sapg.py            # SAPG update (per-block entropy, bounds loss)
-│   │       ├── buffer.py          # Extended rollout buffer
-│   │       ├── trainer.py         # SAPG training loop
-│   │       └── utils.py           # Helpers
-│   └── utils/
-│       └── paths.py               # Path resolution utilities
+│   └── tasks/
+│       ├── __init__.py                 # Registers each task's gym id
+│       └── reorient/
+│           ├── env_cfg.py              # Scene + env config, reward weights
+│           ├── env.py                  # DirectRLEnv subclass, wires components
+│           ├── observations.py         # 96 + 3*K policy obs (default K=8 → 120-d)
+│           ├── rewards.py              # Donor SAPG five-term reward
+│           ├── terminations.py         # drop / max-consec / timeout
+│           ├── events.py               # Reset logic
+│           └── evaluate.py             # ReorientEvaluator (success counting + respawn cooldown)
 ├── configs/
-│   ├── train.yaml                 # Top-level train config
-│   ├── eval.yaml                  # Top-level eval config
-│   ├── task/
-│   │   ├── can_push.yaml          # Task params, reward weights, cameras
-│   │   └── reorient.yaml          # Task params, reward weights, cameras
-│   └── algo/
-│       ├── ppo.yaml               # PPO hyperparameters (base)
-│       └── sapg.yaml              # SAPG-specific overrides (inherits ppo.yaml)
+│   ├── train.yaml                      # Top-level train config
+│   ├── eval.yaml                       # Generic eval params (video size, fps, raytraced)
+│   ├── task/reorient.yaml              # Reorient hyperparams + cameras + eval-time overrides
+│   └── algo/{ppo,sapg,epo}.yaml        # Per-algo hyperparams
 ├── scripts/
-│   ├── train.py                   # Universal train entry point
-│   ├── eval.py                    # Universal eval entry point (edit CHECKPOINT_PATH)
-│   ├── scene_load.py              # Headless scene capture (saves PNG per camera)
-│   └── create_insert_assets.py    # Asset generation helper
+│   ├── train.py                        # Hydra entry: builds env_cfg + dispatches trainer
+│   ├── eval.py                         # Hydra entry: builds env + dispatches evaluator
+│   └── scene_load.py                   # Headless screenshot per camera
 ├── tools/
-│   ├── commands.sh                # Common shell invocations
-│   └── cmd.txt                    # Quick-reference command list
-├── docs/
-│   └── sapg_plan.md               # SAPG implementation notes
+│   ├── cmd.txt                         # Quick-reference command list
+│   ├── commands.sh                     # Common shell snippets
+│   └── pycache_remove.sh               # Clear __pycache__ recursively
+├── pyproject.toml                      # Editable package install (algos, evaluators, robots, utils, manipulation, locomotion)
 └── assets/
-    ├── robots/g1/usd/g1_dex3.usd
-    ├── scenes/kitchen.usd
-    └── objects/can.usd, target.usd
+    ├── robots/g1/                      # G1 USD + meshes + URDF
+    └── objects/cube_multicolor*.usd    # Reorient task cube (physics + visual goal)
 ```
 
 ## Setup
 
 ```bash
-# Outputs symlink (run once)
-mkdir -p /scratch2/danielc174/humanoid-manipulation/outputs
-ln -s /scratch2/danielc174/humanoid-manipulation/outputs ~/projects/humanoid-manipulation/outputs
+# First-time scratch setup (creates the outputs path the symlink points at)
+mkdir -p /scratch2/danielc174/humanoid-rl/outputs
 
-# Recommended: install as editable package into the IsaacLab Python env
+# (Optional) migrate prior runs from the old folder name. Pick ONE:
+#   mv  /scratch2/danielc174/humanoid-manipulation /scratch2/danielc174/humanoid-rl
+#   ln -s /scratch2/danielc174/humanoid-manipulation/outputs/* \
+#         /scratch2/danielc174/humanoid-rl/outputs/
+
+# Install as editable package into the IsaacLab Python env (preferred)
 ~/IsaacLab/isaaclab.sh -p -m pip install -e .
 
 # Fallback: if pip install into IsaacLab Python isn't possible, set PYTHONPATH instead
-# (add to SLURM script or .bashrc)
-export PYTHONPATH=~/projects/humanoid-manipulation:$PYTHONPATH
+export PYTHONPATH=~/projects/humanoid-rl:$PYTHONPATH
 ```
 
 ## Run Commands
 
-All scripts are task-agnostic. Specify task on the command line.
+All scripts are task- and algo-agnostic; specify both via Hydra overrides.
 
 ```bash
-# Visualize scene (headless, saves PNGs to outputs/scene_load/can_push/)
-~/IsaacLab/isaaclab.sh -p scripts/scene_load.py task=can_push
+# Visualize scene (saves PNGs to outputs/scene_load/<task>/)
+~/IsaacLab/isaaclab.sh -p scripts/scene_load.py task=reorient
 
-# Train PPO (disable wandb for debug runs)
-~/IsaacLab/isaaclab.sh -p scripts/train.py task=can_push wandb.mode=disabled
+# Train PPO (debug: wandb disabled by default)
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient
 
-# Train PPO with wandb
-~/IsaacLab/isaaclab.sh -p scripts/train.py task=can_push
+# Train PPO with wandb online
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient wandb.mode=online
 
 # Train SAPG
-~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=sapg
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=sapg wandb.mode=online
 
-# Eval (edit CHECKPOINT_PATH at top of eval.py first)
-~/IsaacLab/isaaclab.sh -p scripts/eval.py task=can_push
+# Train EPO with 8 blocks
+~/IsaacLab/isaaclab.sh -p scripts/train.py task=reorient algo=epo algo.num_blocks=8 wandb.mode=online
+
+# Eval (records mp4 per camera under <run_dir>/eval/<ckpt_stem>/)
+~/IsaacLab/isaaclab.sh -p scripts/eval.py task=reorient \
+    checkpoint=outputs/reorient/sapg/run_00/checkpoints/model_21000.pt
 ```
 
 ## Adding a New Task
 
-1. Create `manipulation/tasks/<task_name>/` with `env_cfg.py`, `env.py`, `observations.py`, `rewards.py`, `terminations.py`, `events.py`, `__init__.py`
-2. Add `configs/task/<task_name>.yaml` with `gym_id`, `log_name`, `env_cfg_module`, `env_cfg_class`, reward weights, cameras (no `configs/robot/` directory — robot config lives in `manipulation/robots/g1.py`)
-3. Register in `manipulation/tasks/__init__.py`: `from . import <task_name>`
-4. Run: `train.py task=<task_name>`
+1. Create `<domain>/tasks/<task_name>/` with `env_cfg.py`, `env.py`,
+   `observations.py`, `rewards.py`, `terminations.py`, `events.py`,
+   `__init__.py` (registers the gym id).
+2. (Optional) add `evaluate.py` with a `<Task>Evaluator(BaseEvaluator)`
+   subclass for task-specific eval logic. Tasks without it fall back to
+   `BaseEvaluator`.
+3. Add `configs/task/<task_name>.yaml` with:
+   - `gym_id`, `log_name`
+   - `env_cfg_module`, `env_cfg_class`
+   - (optional) `evaluator_module`, `evaluator_class`
+   - `cameras:` map for video rendering
+   - `viewer:` defaults
+   - (optional) `eval:` block of fields the evaluator pushes onto env_cfg
+4. Register in `<domain>/tasks/__init__.py`: `from . import <task_name>`.
+5. Run: `train.py task=<task_name>`
 
-## Observation Space (108-dim)
+## Adding Locomotion Later
 
-| Slice | Content |
-|---|---|
-| [0:28] | joint positions |
-| [28:56] | joint velocities |
-| [56:84] | target_error (target_joint_pos - joint_pos) |
-| [84:87] | can position (robot-relative) |
-| [87:90] | can linear velocity |
-| [90:93] | target position (robot-relative, fixed) |
-| [93:96] | left palm position (robot-relative) |
-| [96:99] | right palm position (robot-relative) |
-| [99:102] | vector: can → left palm |
-| [102:105] | vector: can → right palm |
-| [105:108] | vector: can → target |
+When locomotion lands, it slots in alongside manipulation:
 
-The table above is specific to `can_push`. The `reorient` task has its own 108-dim layout; see `manipulation/tasks/reorient/observations.py`.
+1. Create `locomotion/tasks/<task>/` mirroring manipulation's structure.
+2. In `robots/g1.py` (section 3 placeholder), add `G1_FREE_CFG` with
+   `fix_root_link=False` and the active-leg actuator group, plus
+   `LOCOMOTION_ACTUATED_JOINTS` / `LOCOMOTION_ACTION_SCALE`.
+3. Locomotion tasks consume those new symbols; manipulation keeps using
+   `G1_FIXED_CFG` and the upper-body `ACTUATED_JOINTS`.
+4. The same algorithms in `algos/` and the same evaluator base in
+   `evaluators/` work for both — no fork.
 
-## can_push Task
+## Reorient Task
 
-**Goal**: Left arm pushes can into circular target region (radius=0.5m).
+**Goal**: bimanually reorient a 5 cm cube (mass 0.1 kg, multi-color faces)
+on a 1×1 m table to a randomly sampled target pose.
 
-**Rewards**: approach (left palm → can) + push (can → target) + success bonus
+**Observation (120-d, default K=8 corners)**: joint pos+vel of the 28
+actuated joints, robot-relative object & goal pose, palm + fingertip
+positions, K = 8 cube corners' delta vectors to the goal, lifted flag,
+near-goal progress.
 
-**Penalties**: drop, right arm idle deviation, joint limits, action rate, joint velocity
+**Reward (donor AllegroKuka five-term)**: fingertip→object distance
+shaping, lifting shaping + one-shot lift bonus, keypoint→goal shaping
+(gated by lifted), success bonus on each near-goal hit.
 
-**Termination**: success | can dropped | timeout (15s)
+**Termination**: drop (object below ``object_drop_z``), max consecutive
+successes (50), timeout (10 s).
 
-**Robot spawn**: `(2.34882, -0.63841, 0.80127)`, 90° Z rotation
-
-**Can spawn**: `(2.145, -0.2979, 0.7690)` ± XY randomization + random yaw
-
-**Target**: fixed at `(2.6206, -0.2387, 0.741838)`
+**Eval-time overrides** (in `configs/task/reorient.yaml::eval`):
+tighter ``success_tolerance`` (0.04), longer ``success_steps`` (40 frames
+hold), 20 s episodes, ``max_consecutive_successes`` raised so the policy
+keeps reorienting through the whole video, ``hold_frames`` cooldown
+between accepted goal respawns to keep the rendered cube from strobing.
 
 ## Key Design Notes
 
-- **Delta PD control**: actions are joint position deltas, accumulated into target, clamped to joint limits
-- **Per-joint action scales**: derived from motor physics (`0.25 * effort_limit / stiffness`)
-- **Robot-relative positions**: all positions subtracted from robot root to eliminate multi-env grid offset
-- **Target is static visual**: no physics, position stored as fixed constant tensor `env.target_pos_w`
-- **Reward weights**: defined in task yaml, pushed to `env_cfg` at runtime by `train.py`
-- **GAE fix**: `next_not_done = 1 - dones[t]` (not `dones[t+1]`)
-- **Value clipping**: prevents value loss explosions
-- **Entropy coef**: 0.025 (prevents entropy collapse)
+- **Delta PD control**: actions are joint position deltas, accumulated into
+  target, clamped to soft joint limits.
+- **Per-joint action scales**: derived from motor physics
+  (`0.25 * effort_limit / stiffness`).
+- **8-corner keypoints by default**: symmetric over SO(3), trains and
+  evaluates with the same observation shape. Toggle via `NUM_KEYPOINTS` in
+  `manipulation/tasks/reorient/env_cfg.py`.
+- **Robot-relative positions**: positions in the obs are subtracted from
+  the robot root so multi-env grid offsets vanish.
+- **GAE**: `next_not_done = 1 - dones[t]` (not `dones[t+1]`).
+- **Value normalization**: rl_games convention — critic outputs in
+  normalized space, denormalized for buffer storage / GAE, renormalized
+  for the loss.
+- **Value bootstrap**: at truncation, `gamma * V(s_t)` is added to the
+  reward to keep GAE sane (rl_games approximation).
+- **Reward weights**: stored as fields on `env_cfg`, pushed from task yaml
+  by `scripts/train.py` (via `setattr` for any field name that matches).

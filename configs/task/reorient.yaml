@@ -1,9 +1,18 @@
 gym_id: Reorient
 log_name: reorient
-env_cfg_module: manipulation.tasks.reorient.env_cfg
+env_cfg_module: tasks.manipulation.reorient.env_cfg
 env_cfg_class: ReorientEnvCfg
 
+# Per-task evaluator class (loaded by scripts/eval.py).
+evaluator_module: tasks.manipulation.reorient.evaluate
+evaluator_class: ReorientEvaluator
+
 episode_length_s: 10.0
+
+# Number of cube keypoints used for reorientation scoring. 8 = all corners
+# (default, symmetric). 4 = SAPG donor's tetrahedral subset (ablation only).
+# Changing this rebuilds the obs vector — must match between train and eval.
+num_keypoints: 8
 
 # ── Scene layout (uncomment to override env_cfg.py defaults) ──────────────────
 # target_volume_origin: [0.55, 0.0, 1.05]
@@ -11,7 +20,7 @@ episode_length_s: 10.0
 # cuboid_spawn_pos:     [0.55, 0.0, 0.975]
 # object_drop_z:        0.70
 
-# ── Donor reward scales (Phase A unused; Phase C wires them in) ───────────────
+# ── Donor reward scales (override defaults from env_cfg.py if needed) ────────
 # lifting_rew_scale:        20.0
 # lifting_bonus:            300.0
 # lifting_bonus_threshold:  0.15
@@ -19,12 +28,19 @@ episode_length_s: 10.0
 # distance_delta_rew_scale: 50.0
 # reach_goal_bonus:         1000.0
 
-# ── Curriculum (Phase D only) ─────────────────────────────────────────────────
+# ── Curriculum ───────────────────────────────────────────────────────────────
 # enable_curriculum:              false
 # success_tolerance:              0.075
 # target_success_tolerance:       0.01
-# tolerance_curriculum_increment: 0.9
-# tolerance_curriculum_interval:  3000
+
+# ── Eval-time overrides (read by ReorientEvaluator, applied to env_cfg) ──────
+# Generic eval params (video size, fps, raytraced) live in configs/eval.yaml.
+eval:
+  success_tolerance: 0.04        # tighter than training's 0.075
+  success_steps: 40              # must hold pose this many steps to count
+  hold_frames: 90                # respawn cooldown after a success in video
+  episode_length_s: 20.0         # long videos so the policy is observable
+  max_consecutive_successes: 1000000000   # effectively disable; let video run
 
 cameras:
   sideview:

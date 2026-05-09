@@ -1,0 +1,218 @@
+# Reorient task -- fixed-base G1 bimanual cuboid reorientation.
+# Port of SAPG Two-Arms Reorientation task (isaacgymenvs AllegroKukaTwoArmsReorientation).
+from __future__ import annotations
+
+import numpy as np
+import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.envs import DirectRLEnvCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils import configclass
+from gymnasium.spaces import Box
+
+from assets.robots.g1_cfg import G1_FIXED_CFG
+from utils.paths import ASSET_ROOT
+
+# --- Robot body name constants ---
+LEFT_PALM_BODY = "left_hand_palm_link"
+RIGHT_PALM_BODY = "right_hand_palm_link"
+
+LEFT_FINGERTIP_BODIES = [
+    "left_hand_thumb_2_link",
+    "left_hand_index_1_link",
+    "left_hand_middle_1_link",
+]
+RIGHT_FINGERTIP_BODIES = [
+    "right_hand_thumb_2_link",
+    "right_hand_index_1_link",
+    "right_hand_middle_1_link",
+]
+NUM_FINGERTIPS_PER_HAND = 3
+NUM_ARMS = 2
+
+# --- Scene layout constants (meters, world frame) ---
+TABLE_SIZE = (1.0, 1.0, 0.78)
+TABLE_POS = (0.70, 0.0, 0.39)
+TABLE_TOP_Z = TABLE_POS[2] + TABLE_SIZE[2] / 2  # 0.78
+
+CUBOID_SIZE = (0.05, 0.05, 0.05)  # donor: objectBaseSize = 0.05
+
+CUBOID_SPAWN_XY = (0.40, 0.0)
+CUBOID_SPAWN_POS = (
+    CUBOID_SPAWN_XY[0],
+    CUBOID_SPAWN_XY[1],
+    TABLE_TOP_Z + CUBOID_SIZE[2] / 2 + 0.05,
+)
+
+TARGET_VOLUME_ORIGIN = (CUBOID_SPAWN_XY[0], CUBOID_SPAWN_XY[1], TABLE_TOP_Z + 0.15)
+TARGET_VOLUME_EXTENT = (
+    (-0.10, 0.10),
+    (-0.20, 0.20),
+    (-0.05, 0.15),
+)
+
+# Drop threshold: donor resets when object_pos_z < 0.1 (near floor).
+OBJECT_DROP_Z = 0.1
+
+# --- Reward scales (donor AllegroKuka.yaml values) ---
+LIFTING_REW_SCALE = 20.0
+LIFTING_BONUS = 300.0
+LIFTING_BONUS_THRESHOLD = 0.15
+KEYPOINT_REW_SCALE = 200.0
+DISTANCE_DELTA_REW_SCALE = 50.0
+REACH_GOAL_BONUS = 1000.0
+FALL_PENALTY = 0.0
+
+SUCCESS_TOLERANCE = 0.075
+TARGET_SUCCESS_TOLERANCE = 0.01
+CURRICULUM_WARMUP_FRAMES = 160000    # 10000 iters * 16 steps/iter
+CURRICULUM_TOTAL_FRAMES = 960000     # 60000 iters * 16 steps/iter
+MAX_CONSECUTIVE_SUCCESSES = 50
+SUCCESS_STEPS = 1
+KEYPOINT_SCALE = 1.5
+
+# Number of cube corners used to score reorientation. Default is 8 (all
+# corners) which is symmetric and unambiguous for SO(3) targets. The donor
+# (AllegroKukaTwoArmsReorientation) uses 4 diagonal corners; this value is
+# kept configurable for ablations. Observation length scales as 96 + 3*K.
+NUM_KEYPOINTS = 8
+
+
+# --- Scene ---
+@configclass
+class ReorientSceneCfg(InteractiveSceneCfg):
+    """G1 fixed-base + table + cuboid + visual goal marker."""
+
+    robot = G1_FIXED_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+    )
+
+    table: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Table",
+        spawn=sim_utils.CuboidCfg(
+            size=TABLE_SIZE,
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.70, 0.58, 0.40)
+            ),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                static_friction=1.0,
+                dynamic_friction=1.0,
+            ),
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=TABLE_POS),
+    )
+
+    cuboid: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cuboid",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(ASSET_ROOT / "objects" / "cube_multicolor.usd"),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=False,
+                max_linear_velocity=10.0,
+                max_angular_velocity=10.0,
+                max_depenetration_velocity=1.0,
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=CUBOID_SPAWN_POS),
+    )
+
+    goal: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Goal",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(ASSET_ROOT / "objects" / "cube_multicolor.usd"),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=1000.0,
+            ),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=TARGET_VOLUME_ORIGIN,
+        ),
+    )
+
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
+    )
+
+
+# --- Env cfg ---
+@configclass
+class ReorientEnvCfg(DirectRLEnvCfg):
+    scene: ReorientSceneCfg = ReorientSceneCfg(
+        num_envs=4096,
+        env_spacing=3.0,
+    )
+
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(
+        dt=1 / 200,
+        render_interval=5,
+        gravity=(0.0, 0.0, -9.81),
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        physx=sim_utils.PhysxCfg(
+            bounce_threshold_velocity=0.01,
+            gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
+            gpu_total_aggregate_pairs_capacity=1024 * 1024,
+        ),
+    )
+
+    decimation: int = 5  # 200 Hz sim / 5 = 40 Hz control
+    episode_length_s: float = 10.0  # donor: 600 steps @ 60 Hz = 10 s
+
+    # -- Keypoint count (drives observation length) --
+    # Default 8 corners is the symmetric SO(3) choice and is the value used
+    # uniformly across training and evaluation. To ablate (e.g. 4 diagonal
+    # corners like the SAPG donor), edit ``NUM_KEYPOINTS`` at the top of this
+    # file rather than overriding from a yaml -- changing this rebuilds the
+    # observation tensor shape, which yaml overrides do not propagate.
+    num_keypoints: int = NUM_KEYPOINTS
+
+    observation_space = Box(low=-np.inf, high=np.inf, shape=(96 + 3 * NUM_KEYPOINTS,))
+    state_space = 0
+    action_space = Box(low=-1.0, high=1.0, shape=(28,))
+
+    # -- Scene layout --
+    table_top_z: float = TABLE_TOP_Z
+    cuboid_spawn_pos: tuple = CUBOID_SPAWN_POS
+    target_volume_origin: tuple = TARGET_VOLUME_ORIGIN
+    target_volume_extent: tuple = TARGET_VOLUME_EXTENT
+    object_drop_z: float = OBJECT_DROP_Z
+
+    # -- Donor reward scales --
+    lifting_rew_scale: float = LIFTING_REW_SCALE
+    lifting_bonus: float = LIFTING_BONUS
+    lifting_bonus_threshold: float = LIFTING_BONUS_THRESHOLD
+    keypoint_rew_scale: float = KEYPOINT_REW_SCALE
+    distance_delta_rew_scale: float = DISTANCE_DELTA_REW_SCALE
+    reach_goal_bonus: float = REACH_GOAL_BONUS
+    fall_penalty: float = FALL_PENALTY
+
+    # -- Success / curriculum --
+    success_tolerance: float = SUCCESS_TOLERANCE
+    target_success_tolerance: float = TARGET_SUCCESS_TOLERANCE
+    curriculum_warmup_frames: int = CURRICULUM_WARMUP_FRAMES
+    curriculum_total_frames: int = CURRICULUM_TOTAL_FRAMES
+    max_consecutive_successes: int = MAX_CONSECUTIVE_SUCCESSES
+    success_steps: int = SUCCESS_STEPS
+    keypoint_scale: float = KEYPOINT_SCALE
+    enable_curriculum: bool = False
+
+    # -- Reset noise (donor: AllegroKuka.yaml) --
+    reset_dof_pos_noise_arm: float = 0.1       # rad, uniform +/-
+    reset_dof_pos_noise_finger: float = 0.1    # rad, uniform +/-
+    reset_dof_vel_noise: float = 0.5           # rad/s, uniform +/-
+    reset_position_noise_x: float = 0.1        # m, uniform +/- on cuboid spawn
+    reset_position_noise_y: float = 0.1        # m, uniform +/- on cuboid spawn
+    reset_position_noise_z: float = 0.02       # m, uniform +/- on cuboid spawn
+    reset_rotation_noise: float = 1.0          # 1.0 = full SO(3) random rotation

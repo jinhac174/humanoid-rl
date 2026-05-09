@@ -9,10 +9,10 @@ num_envs: 4096
 
 checkpoint: null    # path to checkpoint for resuming training
 
-log_root: /scratch2/danielc174/humanoid-manipulation/outputs
+log_root: /scratch2/danielc174/humanoid-rl/outputs
 
 wandb:
-  project: humanoid-manipulation
+  project: humanoid-rl
   mode: disabled
   notes: ""
 

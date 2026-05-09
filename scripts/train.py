@@ -32,7 +32,7 @@ def main(cfg: DictConfig):
     simulation_app = app_launcher.app
 
     import gymnasium as gym
-    import manipulation.tasks
+    import tasks
 
     torch.manual_seed(cfg.seed)
 
@@ -76,7 +76,14 @@ def main(cfg: DictConfig):
 
     # push all task yaml fields that exist on env_cfg
     task_dict = OmegaConf.to_container(cfg.task, resolve=True)
-    SCRIPT_KEYS = {"gym_id", "log_name", "env_cfg_module", "env_cfg_class", "cameras", "viewer"}
+    # Hydra-only fields that don't belong on env_cfg.
+    SCRIPT_KEYS = {
+        "gym_id", "log_name",
+        "env_cfg_module", "env_cfg_class",
+        "evaluator_module", "evaluator_class",
+        "cameras", "viewer",
+        "eval",     # eval-time overrides; consumed by scripts/eval.py only
+    }
     for key, val in task_dict.items():
         if key in SCRIPT_KEYS:
             continue
@@ -86,7 +93,7 @@ def main(cfg: DictConfig):
     env = gym.make(cfg.task.gym_id, cfg=env_cfg)
 
     # ── Trainer ───────────────────────────────────────────────────────────
-    from manipulation.algos import TRAINER_REGISTRY
+    from algos import TRAINER_REGISTRY
     trainer = TRAINER_REGISTRY[cfg.algo.name](env=env, cfg=cfg, run_dir=run_dir)
     trainer.run()
 
