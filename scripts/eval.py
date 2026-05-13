@@ -19,6 +19,14 @@ Usage:
     ~/IsaacLab/isaaclab.sh -p scripts/eval.py task=reorient \\
         checkpoint=... raytraced=true video_width=1920 video_height=1080
 """
+# Put the project root on sys.path so `from algos...`, `from hrl_utils.paths...`,
+# `from assets.robots.g1_cfg...`, etc. resolve regardless of which python
+# launches us (kit python rewrites PYTHONPATH, so an env-var-only approach
+# isn't reliable).
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+
 import importlib
 
 import hydra

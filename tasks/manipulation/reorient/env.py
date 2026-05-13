@@ -231,9 +231,13 @@ class ReorientEnv(DirectRLEnv):
         return rew_fn.compute_reward(self)
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        # No need to call compute_task_state again -- _get_observations ran it
-        # earlier in the same step and no physics has happened since, so
-        # env.keypoints_max_dist is already current.
+        # IsaacLab's DirectRLEnv.step() calls _get_dones BEFORE _get_rewards
+        # and _get_observations, so the task-state buffers (keypoints_max_dist
+        # in particular) must be refreshed here from the latest sim state.
+        # _get_observations will recompute again afterwards because _reset_idx
+        # may have replaced state for terminated envs in the meantime.
+        obs_fn.compute_task_state(self)
+
         keypoint_success_tol = self.cfg.success_tolerance * self.cfg.keypoint_scale
         self.near_goal = self.keypoints_max_dist <= keypoint_success_tol
         self.near_goal_steps = self.near_goal_steps + self.near_goal.int()

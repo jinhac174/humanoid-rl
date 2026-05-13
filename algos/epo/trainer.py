@@ -12,7 +12,7 @@ import wandb
 from pathlib import Path
 
 from algos.epo.epo import EPO
-from utils.logging import iter_loggable_items
+from hrl_utils.logging import iter_loggable_items
 
 _EXCLUDE_FROM_ROLLOUT_AGG = {"task_episode_success_per_env"}
 

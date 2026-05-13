@@ -4,6 +4,14 @@ Universal scene loader — headless, saves one frame per camera.
 Usage:
     ~/IsaacLab/isaaclab.sh -p scripts/scene_load.py task=reorient
 """
+# Put the project root on sys.path so `from algos...`, `from hrl_utils.paths...`,
+# `from assets.robots.g1_cfg...`, etc. resolve regardless of which python
+# launches us (kit python rewrites PYTHONPATH, so an env-var-only approach
+# isn't reliable).
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+
 import importlib
 import numpy as np
 import imageio.v2 as imageio
@@ -24,7 +32,7 @@ def main(cfg: DictConfig):
     import gymnasium as gym
     import tasks
 
-    save_dir = Path(cfg.log_root) / "scene_load" / cfg.task.log_name
+    save_dir = Path(cfg.log_root) / "debug" / "scene" / cfg.task.log_name
     save_dir.mkdir(parents=True, exist_ok=True)
 
     SCRIPT_KEYS = {

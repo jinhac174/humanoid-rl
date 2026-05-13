@@ -1,0 +1,83 @@
+gym_id: Velocity-Tracking
+log_name: velocity_tracking
+env_cfg_module: tasks.locomotion.velocity_tracking.env_cfg
+env_cfg_class: VelocityTrackingEnvCfg
+
+evaluator_module: tasks.locomotion.velocity_tracking.evaluate
+evaluator_class: VelocityTrackingEvaluator
+
+episode_length_s: 20.0
+
+# ── Action ───────────────────────────────────────────────────────────────
+# target = action * cfg.action_scale * per_joint_scale + default_pose
+action_scale: 0.5
+
+# ── Velocity command ranges ──────────────────────────────────────────────
+# First-iteration: forward-only walking with yaw turning. Widen lin_y once
+# the policy can walk straight and turn reliably.
+cmd_lin_vel_x_range: [0.0, 1.0]
+cmd_lin_vel_y_range: [0.0, 0.0]
+cmd_ang_vel_z_range: [-1.0, 1.0]
+cmd_resampling_time_s: 10.0
+cmd_standing_prob: 0.02
+
+# ── Push event (off for first iteration) ─────────────────────────────────
+push_enabled: false
+push_interval_s: 12.0
+push_velocity_xy_range: [-0.5, 0.5]
+
+# ── Reward weights (start from G1RoughEnvCfg defaults; tune per run) ─────
+rew_track_lin_vel_xy: 1.0
+rew_track_lin_vel_std: 0.5
+rew_track_ang_vel_z:  2.0
+rew_track_ang_vel_std: 0.5
+rew_feet_air_time:           0.25
+rew_feet_air_time_threshold: 0.4
+
+pen_termination:        200.0
+pen_lin_vel_z:          0.0       # disabled in G1RoughEnvCfg
+pen_ang_vel_xy:         0.05
+pen_flat_orientation:   1.0
+pen_action_rate:        0.005
+pen_dof_torques:        1.5e-7
+pen_dof_acc:            1.25e-7
+pen_dof_pos_limits:     1.0
+pen_feet_slide:         0.1
+pen_joint_dev_hip:      0.1
+pen_joint_dev_arms:     0.1
+pen_joint_dev_hands:    0.05
+pen_joint_dev_waist:    0.1
+
+# ── Termination ──────────────────────────────────────────────────────────
+illegal_contact_threshold: 1.0
+
+# ── Observation noise ────────────────────────────────────────────────────
+obs_noise_enabled:        true
+obs_noise_base_lin_vel:   0.1
+obs_noise_base_ang_vel:   0.2
+obs_noise_projected_grav: 0.05
+obs_noise_joint_pos:      0.01
+obs_noise_joint_vel:      1.5
+
+# ── Eval-time overrides (read by VelocityTrackingEvaluator) ─────────────
+# If set, pins the command to (vx, vy, wz) for the whole eval episode.
+# Comment out / remove to let the env keep auto-resampling commands.
+eval:
+  obs_noise_enabled: false
+  episode_length_s: 30.0
+  # fixed_command: [1.0, 0.0, 0.0]   # forward-walk stress test
+  # fixed_command: [0.0, 0.0, 1.0]   # turn-in-place stress test
+
+# ── Cameras / viewer for scene_load and eval video ──────────────────────
+cameras:
+  follow:
+    eye:    [3.0, 3.0, 1.5]
+    lookat: [0.0, 0.0, 0.8]
+  side:
+    eye:    [0.0, 4.0, 1.0]
+    lookat: [0.0, 0.0, 0.8]
+
+viewer:
+  resolution: [1280, 720]
+  env_index: 0
+  origin_type: world

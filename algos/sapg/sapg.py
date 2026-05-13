@@ -17,8 +17,8 @@ from torch.optim import Adam
 from algos.sapg.buffer import SAPGRolloutBuffer
 from algos.sapg.network import SAPGActorCritic
 from algos.sapg.utils import filter_leader, swap_and_flatten01
-from utils.logging import explained_variance
-from utils.normalization import RunningMeanStd
+from hrl_utils.logging import explained_variance
+from hrl_utils.normalization import RunningMeanStd
 
 
 class SAPG:

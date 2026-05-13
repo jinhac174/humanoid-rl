@@ -11,7 +11,7 @@ from isaaclab.utils import configclass
 from gymnasium.spaces import Box
 
 from assets.robots.g1_cfg import G1_FIXED_CFG
-from utils.paths import ASSET_ROOT
+from hrl_utils.paths import ASSET_ROOT
 
 # --- Robot body name constants ---
 LEFT_PALM_BODY = "left_hand_palm_link"

@@ -4,8 +4,8 @@ from torch.optim import Adam
 
 from algos.ppo.buffer import RolloutBuffer
 from algos.ppo.network import ActorCritic
-from utils.logging import explained_variance
-from utils.normalization import RunningMeanStd
+from hrl_utils.logging import explained_variance
+from hrl_utils.normalization import RunningMeanStd
 
 
 class PPO:

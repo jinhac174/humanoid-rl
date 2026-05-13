@@ -80,11 +80,15 @@ mkdir -p /scratch2/danielc174/humanoid-rl/outputs
 #   ln -s /scratch2/danielc174/humanoid-manipulation/outputs/* \
 #         /scratch2/danielc174/humanoid-rl/outputs/
 
-# Install as editable package into the IsaacLab Python env (preferred)
-~/IsaacLab/isaaclab.sh -p -m pip install -e .
+# Make our packages importable inside the Singularity / IsaacLab Python.
+# Choose ONE — both make "from algos.ppo.trainer import ..." resolve.
 
-# Fallback: if pip install into IsaacLab Python isn't possible, set PYTHONPATH instead
+# Option A (recommended in containers): set PYTHONPATH in your job/shell
+#   Stateless, no filesystem writes, no permission issues with read-only images.
 export PYTHONPATH=~/projects/humanoid-rl:$PYTHONPATH
+
+# Option B (use if you have a writable user site-packages mounted in)
+~/IsaacLab/isaaclab.sh -p -m pip install -e .
 ```
 
 ## Run Commands
