@@ -21,9 +21,9 @@ mutation_sigma: 0.1
 
 # Number of elites preserved unchanged. Paper uses x = K - 2 (keep all but 2,
 # replace the 2 worst with crossover-mutated children).
-# With num_blocks=6, this means keep 4 elites, replace 2.
-# Computed at runtime as: num_elites = num_blocks - 2
-# (Set here explicitly for clarity; -1 means "use K-2 default")
+# With num_blocks=8 (inherited from sapg.yaml), this yields 5 non-master elites
+# kept out of 7 non-master blocks, and 2 are replaced per GA event.
+# Computed at runtime by algos/epo/epo.py when this is -1.
 num_elites: -1
 
 # Fitness evaluation window: use mean episodic return over the last N

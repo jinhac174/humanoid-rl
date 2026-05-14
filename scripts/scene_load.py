@@ -39,6 +39,7 @@ def main(cfg: DictConfig):
         "gym_id", "log_name",
         "env_cfg_module", "env_cfg_class",
         "evaluator_module", "evaluator_class",
+        "wandb_project", "wandb_tag",
         "cameras", "viewer",
         "eval",
     }

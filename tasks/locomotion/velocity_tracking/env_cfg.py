@@ -155,7 +155,17 @@ class VelocityTrackingEnvCfg(DirectRLEnvCfg):
     pen_joint_dev_waist:   float = 0.1
 
     # ── Termination ────────────────────────────────────────────────────
-    illegal_contact_threshold: float = 1.0          # |force| (N) above which we terminate
+    # The episode terminates (and the -200 pen_termination fires) when ANY
+    # of these trip. See terminations.py. base_height + gravity_z are the
+    # robust catch-alls; torso contact alone misses crawl/push-up falls.
+    termination_base_height:   float = 0.4   # pelvis z (m) below this = fell.
+                                             # Spawn z is 0.76; squat-walk stays
+                                             # well above 0.4, fully-down ~0.15.
+    termination_gravity_z:     float = -0.4  # projected_gravity_b.z above this
+                                             # = tipped past ~66deg from vertical.
+                                             # Upright = -1.0, horizontal = 0.0.
+    illegal_contact_threshold: float = 1.0   # torso_link |force| (N) above which
+                                             # we terminate (extra signal).
 
     # ── Observation noise (Uniform, half-range per term) ──────────────
     obs_noise_base_lin_vel:    float = 0.1

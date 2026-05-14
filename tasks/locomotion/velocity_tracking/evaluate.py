@@ -1,21 +1,27 @@
 """Velocity-tracking evaluator.
 
-Adds gait-relevant metrics on top of :class:`evaluators.base.BaseEvaluator`:
+Adds three pieces of locomotion-specific behaviour on top of
+:class:`evaluators.base.BaseEvaluator`:
 
-    * Per-episode commanded vs. achieved velocity error (XY + yaw).
-    * Mean foot air time over the episode.
+    1. Per-episode commanded vs. achieved velocity error (XY + yaw).
+    2. Mean foot air time over the episode.
+    3. Camera FOLLOW: cfg.task.cameras[*].eye / .lookat are interpreted as
+       OFFSETS from the robot base each frame, so the video tracks the
+       walking robot instead of letting it stride out of frame. This is the
+       override that makes the locomotion videos watchable.
 
 For the first iteration we deliberately do NOT pin a fixed command schedule
-in eval — the env continues to resample commands every
-``cmd_resampling_time_s`` so the recorded video shows the policy reacting to
-multiple commands. To pin a single command for a stress test, set
-``cfg.task.eval.fixed_command: [vx, vy, wz]`` (consumed below if present).
+in eval — the env keeps resampling commands every ``cmd_resampling_time_s``
+so the recorded video shows the policy reacting to multiple commands. To pin
+one command for a stress test, set ``cfg.task.eval.fixed_command: [vx, vy, wz]``.
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from evaluators.base import BaseEvaluator
+from evaluators.utils import grab_frame
 
 
 class VelocityTrackingEvaluator(BaseEvaluator):
@@ -73,3 +79,25 @@ class VelocityTrackingEvaluator(BaseEvaluator):
             f"| ang_err={self._ang_err_sum / n:.3f} rad/s "
             f"| mean_airtime={self._airtime_sum / n:.3f} s"
         )
+
+    def _record_frame(self, writers: dict) -> None:
+        """Tracking-camera variant: cam.eye / cam.lookat are robot-relative.
+
+        Each frame, the camera is re-anchored to the robot's current world
+        XY position (Z is kept absolute so the camera doesn't bob with the
+        torso). This is what keeps the policy in view as it walks across
+        the plane.
+        """
+        env = self.unwrapped
+        base_pos = env.robot.data.root_pos_w[0].detach().cpu().numpy()
+        # Anchor in XY only — leave Z to cfg.eye / cfg.lookat absolute heights.
+        anchor = np.array([base_pos[0], base_pos[1], 0.0], dtype=np.float64)
+
+        if self.use_raytracing:
+            for _ in range(3):
+                self.env.render()
+        for cam_name, cam_cfg in self.cameras.items():
+            eye    = (np.array(list(cam_cfg.eye),    dtype=np.float64) + anchor).tolist()
+            lookat = (np.array(list(cam_cfg.lookat), dtype=np.float64) + anchor).tolist()
+            self.sim.set_camera_view(eye=eye, target=lookat)
+            writers[cam_name].append_data(grab_frame(self.env))

@@ -1,7 +1,7 @@
 # SAPG = PPO base + per-block conditioning. All shared PPO hyperparams
 # are inherited from ppo.yaml; only SAPG-specific fields are declared
 # here. The `name` override is necessary because train.py keys on it
-# to dispatch the trainer (see manipulation/algos/__init__.py).
+# to dispatch the trainer (see algos/__init__.py).
 defaults:
   - ppo
   - _self_
@@ -9,7 +9,10 @@ defaults:
 name: sapg
 
 # ── SAPG-specific ───────────────────────────────────────────────────────────
-num_blocks: 6                # paper uses 6 for allegro_kuka tasks
+# Block count default is 8 to match EPO and divide cleanly into num_envs=8192
+# (1024 envs per block). Original paper used 6 for allegro_kuka; override
+# at the CLI (algo.num_blocks=6) if you want to reproduce that exactly.
+num_blocks: 8
 extra_param_size: 32         # learned per-block embedding dimension
 entropy_coef_scale: 0.002    # scales per-block entropy range [0.5*scale .. 0]
 off_policy_ratio: 1.0        # number of extra follower blocks to sample

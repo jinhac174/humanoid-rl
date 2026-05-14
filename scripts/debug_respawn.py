@@ -39,6 +39,7 @@ _TASK_YAML_SCRIPT_KEYS = {
     "gym_id", "log_name",
     "env_cfg_module", "env_cfg_class",
     "evaluator_module", "evaluator_class",
+    "wandb_project", "wandb_tag",
     "cameras", "viewer",
     "eval",
 }

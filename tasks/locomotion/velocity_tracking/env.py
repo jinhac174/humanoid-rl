@@ -19,15 +19,12 @@ and ``observations.py`` for the observation assembly.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import torch
 
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
-from isaaclab.utils.math import sample_uniform
 
 from assets.robots.g1_cfg import LOCOMOTION_ACTION_SCALE, LOCOMOTION_ACTUATED_JOINTS
 

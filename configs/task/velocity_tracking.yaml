@@ -6,6 +6,14 @@ env_cfg_class: VelocityTrackingEnvCfg
 evaluator_module: tasks.locomotion.velocity_tracking.evaluate
 evaluator_class: VelocityTrackingEvaluator
 
+# Wandb project this task logs to (overrides cfg.wandb.project).
+# Future locomotion tasks (e.g. balance, gait_imitation) can share this
+# project so they're directly comparable in the wandb UI.
+wandb_project: humanoid_locomotion
+# Wandb tag for filtering. Kept separate from ``log_name`` so it can be a
+# domain-level label rather than the disk-path slug.
+wandb_tag: locomotion
+
 episode_length_s: 20.0
 
 # ── Action ───────────────────────────────────────────────────────────────
@@ -49,7 +57,13 @@ pen_joint_dev_hands:    0.05
 pen_joint_dev_waist:    0.1
 
 # ── Termination ──────────────────────────────────────────────────────────
-illegal_contact_threshold: 1.0
+# Episode terminates (fires the -200 pen_termination) when ANY trip.
+# base_height + gravity_z are the robust catch-alls; torso contact alone
+# misses crawl/push-up falls (the failure mode that let earlier runs learn
+# to crawl instead of walk).
+termination_base_height:   0.4    # pelvis z (m) below this = fell
+termination_gravity_z:    -0.4    # projected_gravity_b.z above this = tipped over
+illegal_contact_threshold: 1.0    # torso_link contact force (N) — extra signal
 
 # ── Observation noise ────────────────────────────────────────────────────
 obs_noise_enabled:        true
@@ -69,12 +83,17 @@ eval:
   # fixed_command: [0.0, 0.0, 1.0]   # turn-in-place stress test
 
 # ── Cameras / viewer for scene_load and eval video ──────────────────────
+# For locomotion these are TRACKING cameras: eye and lookat are interpreted
+# as offsets from the robot's current world XY each frame (Z is absolute,
+# so the camera doesn't bob with the torso). See VelocityTrackingEvaluator
+# _record_frame. For a fixed world camera (e.g. for scene_load.py at t=0)
+# the offsets work as-is since the robot spawns near the origin.
 cameras:
   follow:
-    eye:    [3.0, 3.0, 1.5]
-    lookat: [0.0, 0.0, 0.8]
+    eye:    [3.0, 3.0, 1.5]    # 3 m back-right, 1.5 m up, relative to robot
+    lookat: [0.0, 0.0, 0.8]    # look at point 0.8 m above robot base
   side:
-    eye:    [0.0, 4.0, 1.0]
+    eye:    [0.0, 4.0, 1.0]    # 4 m to the side, 1 m up
     lookat: [0.0, 0.0, 0.8]
 
 viewer:

@@ -7,6 +7,13 @@ env_cfg_class: ReorientEnvCfg
 evaluator_module: tasks.manipulation.reorient.evaluate
 evaluator_class: ReorientEvaluator
 
+# Wandb project this task logs to (overrides cfg.wandb.project).
+wandb_project: humanoid_reorient
+# Wandb tag for filtering. Kept separate from ``log_name`` (which drives disk
+# paths) so we can use a descriptive label like "cube_reorient" without
+# renaming existing outputs/reorient/ directories.
+wandb_tag: cube_reorient
+
 episode_length_s: 10.0
 
 # Number of cube keypoints used for reorientation scoring. 8 = all corners

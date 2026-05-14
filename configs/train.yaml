@@ -5,12 +5,18 @@ defaults:
 
 headless: true
 seed: 42
-num_envs: 4096
+
+# Power-of-2, fits a single 4090 (~24 GB VRAM), and divides cleanly by
+# num_blocks=8 (SAPG/EPO default) -> 1024 envs per block. Same value for
+# PPO/SAPG/EPO so cross-algo comparisons are fair.
+num_envs: 8192
 
 checkpoint: null    # path to checkpoint for resuming training
 
 log_root: /scratch2/danielc174/humanoid-rl/outputs
 
+# Fallback wandb project — overridden per-task via configs/task/<task>.yaml's
+# ``wandb_project`` field (humanoid_reorient, humanoid_locomotion, ...).
 wandb:
   project: humanoid-rl
   mode: disabled

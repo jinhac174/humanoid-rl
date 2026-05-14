@@ -32,6 +32,8 @@ _TASK_YAML_SCRIPT_KEYS = {
     "env_cfg_class",
     "evaluator_module",
     "evaluator_class",
+    "wandb_project",
+    "wandb_tag",
     "cameras",
     "viewer",
     "eval",  # eval-only block; consumed by apply_eval_overrides

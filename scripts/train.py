@@ -18,19 +18,46 @@ from hydra.core.hydra_config import HydraConfig
 from isaaclab.app import AppLauncher
 
 
-def get_next_run_dir(base_dir: Path) -> Path:
-    base_dir.mkdir(parents=True, exist_ok=True)
-    run_ids = []
+def next_run_index(base_dir: Path, algo: str) -> int:
+    """Return the next free NN under ``base_dir`` for runs of this algo.
+
+    Scans for sibling directories matching ``<algo>_NN`` and returns
+    ``max(NN) + 1`` (or 0 if none exist). Pure read-only.
+    """
+    if not base_dir.exists():
+        return 0
+    pat = re.compile(rf"^{re.escape(algo)}_(\d+)$")
+    ids = []
     for p in base_dir.iterdir():
         if not p.is_dir():
             continue
-        m = re.fullmatch(r"run_(\d+)", p.name)
+        m = pat.match(p.name)
         if m:
-            run_ids.append(int(m.group(1)))
-    next_id = 0 if not run_ids else max(run_ids) + 1
-    run_dir = base_dir / f"run_{next_id:02d}"
-    run_dir.mkdir(parents=False, exist_ok=False)
-    return run_dir
+            ids.append(int(m.group(1)))
+    return 0 if not ids else max(ids) + 1
+
+
+def build_run_names(cfg: DictConfig, base_dir: Path) -> tuple[str, str]:
+    """Return ``(disk_name, wandb_name)``.
+
+    Disk name is shell-friendly (lowercase, underscore) — e.g. ``ppo_00``.
+    Wandb name is display-friendly (uppercase, pipe-separator) — e.g.
+    ``PPO | 00``. NN is independently incremented per ``<task>/<algo>``
+    directory: ``outputs/velocity_tracking/ppo/ppo_00/`` and
+    ``outputs/reorient/ppo/ppo_00/`` are unrelated.
+
+    Optional ``+run_tag=<short_tag>`` CLI override is appended to both:
+    ``ppo_00_lr3e4`` / ``PPO | 00 | lr3e4``.
+    """
+    idx = next_run_index(base_dir, cfg.algo.name)
+    nn = f"{idx:02d}"
+    disk_name  = f"{cfg.algo.name}_{nn}"
+    wandb_name = f"{cfg.algo.name.upper()} | {nn}"
+    run_tag = cfg.get("run_tag", None)
+    if run_tag:
+        disk_name  = f"{disk_name}_{run_tag}"
+        wandb_name = f"{wandb_name} | {run_tag}"
+    return disk_name, wandb_name
 
 
 @hydra.main(config_path="../configs", config_name="train", version_base=None)
@@ -45,11 +72,18 @@ def main(cfg: DictConfig):
     torch.manual_seed(cfg.seed)
 
     # ── Run directory ──────────────────────────────────────────────────────
+    # outputs/<task>/<algo>/<algo>_NN/    e.g. outputs/velocity_tracking/ppo/ppo_00
+    # Wandb run name is the same NN, but display-formatted ("PPO | 00").
+    # NN is per-(task, algo); ppo_00 in different tasks aren't related.
     base_dir = Path(cfg.log_root) / cfg.task.log_name / cfg.algo.name
-    run_dir  = get_next_run_dir(base_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    disk_name, wandb_name = build_run_names(cfg, base_dir)
+    run_dir = base_dir / disk_name
+    run_dir.mkdir(parents=False, exist_ok=False)
     for d in ["checkpoints", "hydra", "wandb", "eval"]:
         (run_dir / d).mkdir(parents=True, exist_ok=True)
-    print(f"[train] run dir: {run_dir}")
+    print(f"[train] run dir:   {run_dir}")
+    print(f"[train] wandb run: {wandb_name}")
 
     # ── Save config ────────────────────────────────────────────────────────
     OmegaConf.save(cfg, run_dir / "hydra" / "config_resolved.yaml", resolve=True)
@@ -57,17 +91,24 @@ def main(cfg: DictConfig):
         f.write("\n".join(HydraConfig.get().overrides.task))
 
     # ── W&B ───────────────────────────────────────────────────────────────
+    # Per-task wandb project (declared in configs/task/<task>.yaml). Falls
+    # back to the global cfg.wandb.project if the task didn't set one.
+    wandb_project = (
+        getattr(cfg.task, "wandb_project", None) or cfg.wandb.project
+    )
+    # Tags are two chips for filtering in the wandb UI: the task label and
+    # the algo. Everything else (num_envs, seed, num_blocks, run_tag) lives
+    # in wandb.config via OmegaConf.to_container below and is queryable
+    # there — no need to clutter the tag list.
+    task_tag = getattr(cfg.task, "wandb_tag", None) or cfg.task.log_name
+    tags = [task_tag, cfg.algo.name]
+
     wandb.init(
-        project  = cfg.wandb.project,
-        name     = f"{cfg.algo.name}_{cfg.task.log_name}_{run_dir.name}",
+        project  = wandb_project,
+        name     = wandb_name,
         group    = f"{cfg.task.log_name}_{cfg.algo.name}",
         job_type = "train",
-        tags     = [
-            cfg.task.log_name,
-            cfg.algo.name,
-            f"seed{cfg.seed}",
-            f"n{cfg.num_envs}",
-        ],
+        tags     = tags,
         notes    = cfg.wandb.get("notes", ""),
         dir      = str(run_dir / "wandb"),
         mode     = cfg.wandb.mode,
@@ -89,6 +130,7 @@ def main(cfg: DictConfig):
         "gym_id", "log_name",
         "env_cfg_module", "env_cfg_class",
         "evaluator_module", "evaluator_class",
+        "wandb_project", "wandb_tag",
         "cameras", "viewer",
         "eval",     # eval-time overrides; consumed by scripts/eval.py only
     }
