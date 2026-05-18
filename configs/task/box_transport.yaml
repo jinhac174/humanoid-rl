@@ -1,0 +1,105 @@
+gym_id: Box-Transport
+log_name: box_transport
+env_cfg_module: tasks.locomotion.box_transport.env_cfg
+env_cfg_class: BoxTransportEnvCfg
+
+evaluator_module: tasks.locomotion.box_transport.evaluate
+evaluator_class: BoxTransportEvaluator
+
+# Wandb project this task logs to (overrides cfg.wandb.project).
+wandb_project: humanoid_locomanipulation
+wandb_tag: box_transport
+
+episode_length_s: 30.0
+
+# Training duration. Phase-2 task is harder than velocity tracking; budget
+# accordingly. Override at the CLI for smaller probes.
+max_iterations: 5000
+
+# ── Action ───────────────────────────────────────────────────────────
+action_scale: 0.5
+
+# ── Auto-derived velocity command (read by env.events.update_autocmd) ──
+autocmd_lin_vel_max:       1.0
+autocmd_ang_vel_max:       1.0
+autocmd_heading_stiffness: 0.5
+autocmd_stop_distance:     0.30
+
+# ── Reset noise ──────────────────────────────────────────────────────
+reset_pose_x_range:   [-0.20, 0.20]
+reset_pose_y_range:   [-0.20, 0.20]
+reset_pose_yaw_range: [-0.3, 0.3]
+reset_box_xy_range:   0.10
+# Target xy half-extent on the target-table top (m).
+reset_target_xy_half: [0.20, 0.20]
+
+# ── Reward weights ────────────────────────────────────────────────────
+# Milestone-based sparse-shaped design. Tune these together — bumping one
+# stage too high can lock the policy out of the next stage.
+rew_walk_to_box:        0.5       # dense, low — get close to the box
+rew_walk_to_box_std:    1.0
+rew_bimanual_contact:   10.0      # sparse one-shot — both palms within reach
+rew_lift:               100.0     # sparse one-shot — box.z > BOX_LIFT_Z
+rew_walk_to_target:     1.0       # dense, gated on lifted
+rew_walk_to_target_std: 1.0
+rew_place_bonus:        500.0     # continuous while placed (per-step)
+rew_place_distance_tol: 0.15      # m — counts as "placed"
+
+# Penalties.
+pen_drop:               100.0     # one-shot when box hits the floor
+pen_termination:        200.0     # one-shot when robot falls
+pen_lin_vel_z:          0.1
+pen_ang_vel_xy:         0.025
+pen_flat_orientation:   0.5
+pen_action_rate:        0.0025
+pen_dof_torques:        1.0e-6
+pen_dof_acc:            0.5e-7
+pen_dof_pos_limits:     0.5
+pen_feet_slide:         0.05
+pen_joint_dev_hip:      0.05
+pen_joint_dev_arms:     0.05      # lower than locomotion — arms must move
+pen_joint_dev_hands:    0.025
+# POSTURE FIX: bumped from 0.1 → 0.3 to address the backward waist lean
+# from the locomotion checkpoints.
+pen_joint_dev_waist:    0.3
+
+# ── Termination ──────────────────────────────────────────────────────
+termination_base_height:   0.4
+termination_gravity_z:    -0.4
+illegal_contact_threshold: 1.0
+box_drop_z:                0.10
+# Number of consecutive control steps the box must be within
+# rew_place_distance_tol of the target before success terminates the episode.
+# 25 at 50 Hz = 0.5 s.
+success_steps_required:    25
+
+# ── Observation noise ────────────────────────────────────────────────
+obs_noise_enabled:        true
+obs_noise_base_lin_vel:   0.1
+obs_noise_base_ang_vel:   0.2
+obs_noise_projected_grav: 0.05
+obs_noise_joint_pos:      0.01
+obs_noise_joint_vel:      1.5
+obs_noise_box_pos:        0.01
+
+# ── Eval-time overrides ──────────────────────────────────────────────
+eval:
+  episode_length_s:  30.0
+  obs_noise_enabled: false
+  # No pinned command in this task — the policy reacts to the live scene.
+
+# ── Cameras for the rendered MP4 (tracking cameras, robot-relative) ──
+# See evaluate.py: each frame, eye/lookat are translated by the robot's
+# current world XY (Z absolute) so the box and tables stay framed.
+cameras:
+  follow:
+    eye:    [3.5, 3.5, 1.8]
+    lookat: [0.0, 0.0, 1.0]
+  side:
+    eye:    [0.0, 5.0, 1.5]
+    lookat: [0.0, 0.0, 1.0]
+
+viewer:
+  eye:        [3.5, 3.5, 1.8]
+  lookat:     [0.0, 0.0, 1.0]
+  origin_type: world
