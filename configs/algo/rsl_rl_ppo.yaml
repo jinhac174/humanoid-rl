@@ -1,0 +1,38 @@
+# rsl_rl PPO — IsaacLab's official PPO implementation.
+# Values mirror G1RoughPPORunnerCfg from IsaacLab. Use this as a known-good
+# baseline alongside our custom PPO/SAPG/EPO.
+
+name: rsl_rl_ppo
+
+# ── Runner ──────────────────────────────────────────────────────────────────
+# max_iterations is task-difficulty dependent — set in configs/task/<task>.yaml.
+# The value below is a generous fallback used only when a task omits its own.
+max_iterations:    1500       # rsl_rl's num_learning_iterations (fallback only)
+num_steps_per_env: 24         # rollout horizon (steps per env per update)
+save_interval:     50         # checkpoint every N iterations
+empirical_normalization: true # rsl_rl's online obs normalization
+logger:            wandb      # let rsl_rl manage wandb; train.py skips its own init
+
+# ── Network (rsl_rl ActorCritic — separate actor/critic MLPs) ──────────────
+init_noise_std:    1.0
+actor_hidden_dims:  [512, 256, 128]
+critic_hidden_dims: [512, 256, 128]
+activation:         elu
+
+# ── PPO ────────────────────────────────────────────────────────────────────
+value_loss_coef:        1.0
+use_clipped_value_loss: true
+clip_param:             0.2
+entropy_coef:           0.008
+num_learning_epochs:    5
+num_mini_batches:       4
+learning_rate:          1.0e-3
+schedule:               adaptive   # "fixed" or "adaptive" (KL-controlled)
+gamma:                  0.99
+lam:                    0.95
+desired_kl:             0.01
+max_grad_norm:          1.0
+
+# Optional: rsl_rl can clip action magnitudes before passing them to the env.
+# null = no clipping (env's own clamp still applies).
+clip_actions:           null
