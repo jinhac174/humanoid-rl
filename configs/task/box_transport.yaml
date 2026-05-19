@@ -34,14 +34,22 @@ reset_box_xy_range:   0.10
 reset_target_xy_half: [0.20, 0.20]
 
 # ── Reward weights ────────────────────────────────────────────────────
-# Milestone-based sparse-shaped design. Tune these together — bumping one
-# stage too high can lock the policy out of the next stage.
-rew_walk_to_box:        0.5       # dense, low — get close to the box
-rew_walk_to_box_std:    1.0
-rew_bimanual_contact:   10.0      # sparse one-shot — both palms within reach
-rew_lift:               100.0     # sparse one-shot — box.z > BOX_LIFT_Z
-rew_walk_to_target:     1.0       # dense, gated on lifted
-rew_walk_to_target_std: 1.0
+# Architecture: phase-1 velocity tracking reward applied against the
+# auto-derived command (events.update_autocmd) drives navigation; sparse
+# manipulation milestones drive the grasp/lift/place. The "walk-to-X"
+# behaviour emerges from the policy tracking the high-level command.
+
+# Locomotion tracking (same defaults as configs/task/velocity_tracking.yaml).
+rew_track_lin_vel_xy:         1.0
+rew_track_lin_vel_std:        0.5
+rew_track_ang_vel_z:          1.0
+rew_track_ang_vel_std:        0.5
+rew_feet_air_time:            0.75
+rew_feet_air_time_threshold:  0.4
+
+# Manipulation milestones.
+rew_bimanual_contact:   10.0      # sparse one-shot — both palms within GRIP_DISTANCE
+rew_lift:               100.0     # sparse one-shot — box.z first crosses BOX_LIFT_Z
 rew_place_bonus:        500.0     # continuous while placed (per-step)
 rew_place_distance_tol: 0.15      # m — counts as "placed"
 

@@ -60,10 +60,20 @@ from .env_cfg import (
 )
 
 
-# ----- Manager shim (IsaacLab mdp.* helpers expect a manager-based env) ------
-# We only need ``action_manager`` here — the locomotion regularizers use it
-# for action-rate, and we don't use any mdp.* helpers that need
-# ``command_manager`` or ``termination_manager``.
+# ----- Manager shims (IsaacLab mdp.* helpers expect a manager-based env) ------
+# ``command_manager`` — needed by the phase-1 velocity-tracking reward
+# helpers (track_lin_vel_*, track_ang_vel_*, feet_air_time_positive_biped),
+# which we re-use here so the policy gets the same locomotion-shaped reward
+# signal it was warm-started on.
+# ``action_manager`` — needed by mdp.action_rate_l2 (locomotion regularizer).
+class _CommandShim:
+    """Returns whatever tensor lives at ``env._commands_dict[name]``."""
+    def __init__(self, env: "BoxTransportEnv"):
+        self._env = env
+    def get_command(self, name: str) -> torch.Tensor:
+        return self._env._commands_dict[name]
+
+
 class _ActionShim:
     def __init__(self, env: "BoxTransportEnv"):
         self._env = env
@@ -162,8 +172,9 @@ class BoxTransportEnv(DirectRLEnv):
         self._box_dropped_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._success_buf     = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
-        # -- Manager shims (action_rate_l2 in rewards.py uses this) --
-        self.action_manager = _ActionShim(self)
+        # -- Manager shims (velocity-tracking rewards + action-rate use these) --
+        self.command_manager = _CommandShim(self)
+        self.action_manager  = _ActionShim(self)
 
         # -- Pre-resolved SceneEntityCfg objects (mdp.* helpers want these) --
         self._scfg = self._build_scene_entity_cfgs()

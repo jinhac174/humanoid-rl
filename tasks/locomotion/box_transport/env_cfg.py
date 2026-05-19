@@ -226,25 +226,31 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     reset_target_xy_half: tuple = TARGET_XY_HALF_RANGE
 
     # ── Reward weights ───────────────────────────────────────────────────
-    # Milestone-based sparse-shaped design (user-confirmed). Order in
-    # rewards.py mirrors this block. All listed as positive magnitudes;
-    # signs applied in the weighted sum.
+    # Architecture:
+    #   * Navigation reward = phase-1 velocity-tracking reward applied
+    #     against the auto-derived command from ``events.update_autocmd``
+    #     (which points at box-xy if not lifted, target-xy if lifted, with
+    #     magnitude → 0 within ``autocmd_stop_distance`` of the goal).
+    #     The "walk-to-box" / "walk-to-target" behaviour emerges from the
+    #     low-level policy tracking the high-level command — same skill
+    #     it learned in phase 1.
+    #   * Manipulation reward = sparse milestone bonuses layered on top:
+    #     bimanual_contact (one-shot) → lift (one-shot) → place_bonus
+    #     (continuous while box is on target) → drop penalty.
 
-    # Manipulation phase 1 — get to the box and touch it.
-    rew_walk_to_box:        float = 0.5      # dense, low weight (negative-exp distance)
-    rew_walk_to_box_std:    float = 1.0      # exp std (m). 1 m off ⇒ reward ~0.37
+    # Locomotion tracking (mirror of velocity_tracking.yaml defaults).
+    rew_track_lin_vel_xy:       float = 1.0
+    rew_track_lin_vel_std:      float = 0.5
+    rew_track_ang_vel_z:        float = 1.0
+    rew_track_ang_vel_std:      float = 0.5
+    rew_feet_air_time:          float = 0.75
+    rew_feet_air_time_threshold:float = 0.4
+
+    # Manipulation milestones.
     rew_bimanual_contact:   float = 10.0     # sparse: one-shot bonus on first frame both palms within GRIP_DISTANCE
-
-    # Manipulation phase 2 — lift the box.
     rew_lift:               float = 100.0    # sparse: one-shot bonus on first frame box.z > BOX_LIFT_Z
-
-    # Manipulation phase 3 — walk to the target table (gated on lifted).
-    rew_walk_to_target:     float = 1.0      # dense (gated)
-    rew_walk_to_target_std: float = 1.0
-
-    # Manipulation phase 4 — place the box.
-    rew_place_bonus:        float = 500.0    # sparse: granted while box is within TARGET_PLACE_TOL of target
-    rew_place_distance_tol: float = 0.15     # m — counts as "placed"
+    rew_place_bonus:        float = 500.0    # continuous while box xy within rew_place_distance_tol of target AND on table
+    rew_place_distance_tol: float = 0.15
 
     # Negative — discourage dropping.
     pen_drop:               float = 100.0    # one-shot when box hits the floor
