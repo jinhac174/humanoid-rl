@@ -433,22 +433,25 @@ _INIT_JOINT_POS_MANIPULATION = {
     ".*_hand_.*":                 0.0,
 }
 
-# Locomotion pose: typical squat-stand from humanoid_isaac G1_DEX3_CFG. Knees
-# bent, ankles compensating, arms neutral. Robot is free-base and balances.
+# Locomotion init pose: matches IsaacLab G1_MINIMAL_CFG. Light squat (NOT the
+# deeper humanoid_isaac stance), arms slightly forward. The lighter stance
+# reduces the actuator load needed just to stand and starts the policy closer
+# to a natural walking pose.
+#   IsaacLab values:  hip_pitch=-0.20  knee=0.42  ankle_pitch=-0.23  spawn_z=0.74
 _INIT_JOINT_POS_LOCOMOTION = {
-    ".*_hip_pitch_joint":           -0.312,
+    ".*_hip_pitch_joint":           -0.20,
     ".*_hip_roll_joint":             0.0,
     ".*_hip_yaw_joint":              0.0,
-    ".*_knee_joint":                 0.669,
-    ".*_ankle_pitch_joint":         -0.363,
+    ".*_knee_joint":                 0.42,
+    ".*_ankle_pitch_joint":         -0.23,
     ".*_ankle_roll_joint":           0.0,
     "waist_.*_joint":                0.0,
-    "left_shoulder_pitch_joint":     0.2,
-    "left_shoulder_roll_joint":      0.2,
-    "right_shoulder_pitch_joint":    0.2,
-    "right_shoulder_roll_joint":    -0.2,
+    "left_shoulder_pitch_joint":     0.35,
+    "left_shoulder_roll_joint":      0.16,
+    "right_shoulder_pitch_joint":    0.35,
+    "right_shoulder_roll_joint":    -0.16,
     ".*_shoulder_yaw_joint":         0.0,
-    ".*_elbow_joint":                0.6,
+    ".*_elbow_joint":                0.87,
     ".*_wrist_roll_joint":           0.0,
     ".*_wrist_pitch_joint":          0.0,
     ".*_wrist_yaw_joint":            0.0,
@@ -499,11 +502,11 @@ G1_FIXED_CFG = ArticulationCfg(
     actuators=_ALL_ACTUATORS,
 )
 
-# ── Locomotion: fix_root_link=False, squat init pose ──────────────────────────
+# ── Locomotion: fix_root_link=False, light-squat init pose ─────────────────
 G1_FREE_CFG = ArticulationCfg(
     spawn=_spawn(fix_root_link=False),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.76),
+        pos=(0.0, 0.0, 0.74),     # matches IsaacLab G1_MINIMAL_CFG
         rot=(1.0, 0.0, 0.0, 0.0),
         joint_pos=_INIT_JOINT_POS_LOCOMOTION,
         joint_vel={".*": 0.0},

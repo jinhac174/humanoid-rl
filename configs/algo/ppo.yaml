@@ -1,5 +1,8 @@
 name: ppo
-max_iterations: 70000
+# max_iterations is task-difficulty dependent — set it in configs/task/<task>.yaml.
+# The value below is a generous safety fallback used only if a task forgets to
+# declare its own (train.py logs a warning when the fallback is used).
+max_iterations: 3000
 
 # ── Network (donor LSTM: MLP [768,512,256] → LSTM(768) → heads) ──────────────
 # MLP fallback (used when use_lstm: false)
@@ -26,7 +29,10 @@ lr_max: 1.0e-2
 # ── PPO ──────────────────────────────────────────────────────────────────────
 gamma: 0.99
 lam: 0.95                 # donor: tau=0.95
-entropy_coef: 0.0         # donor: entropy_coef=0.0
+entropy_coef: 0.005       # standard locomotion value. Donor's 0.0 worked for
+                          # AllegroKuka because dense fingertip-approach reward
+                          # drives learning; locomotion needs the exploration
+                          # bonus to escape the "stand still" local optimum.
 clip_param: 0.1           # donor: e_clip=0.1
 value_coef: 4.0           # donor: critic_coef=4.0
 reward_scale: 0.01        # donor: reward_shaper.scale_value=0.01

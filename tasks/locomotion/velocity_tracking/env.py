@@ -26,7 +26,7 @@ from isaaclab.envs import DirectRLEnv
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 
-from assets.robots.g1_cfg import LOCOMOTION_ACTION_SCALE, LOCOMOTION_ACTUATED_JOINTS
+from assets.robots.g1_cfg import LOCOMOTION_ACTUATED_JOINTS
 
 from . import events as event_fn
 from . import observations as obs_fn
@@ -56,7 +56,12 @@ class _CommandShim:
 
 
 class _ActionShim:
-    """Holds ``action`` (current step) and ``prev_action`` (one step ago)."""
+    """Holds ``action`` (current step) and ``prev_action`` (one step ago).
+
+    Also exposes ``total_action_dim`` so ``isaaclab_rl.rsl_rl.RslRlVecEnvWrapper``
+    (which assumes a manager-based env) accepts a DirectRLEnv with this shim
+    in place. The wrapper queries the attribute once at init.
+    """
     def __init__(self, env: "VelocityTrackingEnv"):
         self._env = env
     @property
@@ -65,6 +70,9 @@ class _ActionShim:
     @property
     def prev_action(self) -> torch.Tensor:
         return self._env._prev_actions
+    @property
+    def total_action_dim(self) -> int:
+        return int(self._env._actions.shape[1])
 
 
 class _TerminationShim:
@@ -101,13 +109,15 @@ class VelocityTrackingEnv(DirectRLEnv):
         assert len(self._actuated_joint_ids) == 43, (
             f"expected 43 actuated joints, got {len(self._actuated_joint_ids)}"
         )
-        self._action_scale_tensor = torch.tensor(
-            LOCOMOTION_ACTION_SCALE, dtype=torch.float32, device=self.device
-        )
-        # IsaacLab convention: target = action * scale + default_pos. The
-        # ``cfg.action_scale`` (=0.5) is an additional global scalar on top of
-        # the per-joint LOCOMOTION_ACTION_SCALE.
-        self._global_action_scale = float(cfg.action_scale)
+        # IsaacLab convention: target = action * cfg.action_scale + default_pos.
+        # Flat scalar (0.5 rad by default) applied uniformly to every joint,
+        # matching ``mdp.JointPositionActionCfg(scale=0.5, use_default_offset=True)``
+        # in IsaacLab's reference velocity task. We deliberately DO NOT use
+        # the per-joint LOCOMOTION_ACTION_SCALE here -- that derivation is for
+        # delta-PD control (``target += action * scale``) which is what the
+        # reorient manipulation task uses; on top of an offset-from-default
+        # action it would crush leg authority by half-to-thirteenth.
+        self._action_scale = float(cfg.action_scale)
 
         # -- Body ids (feet for slide/air-time, torso for illegal contact) --
         self._feet_body_ids = torch.tensor(
@@ -138,9 +148,15 @@ class VelocityTrackingEnv(DirectRLEnv):
         ].clone()
 
         # -- Velocity commands --
-        # (lin_x, lin_y, ang_z); broadcast as (N, 3) tensor.
+        # ``base_velocity``: (lin_x, lin_y, ang_z) per env, exposed via the
+        # _CommandShim under name "base_velocity" for IsaacLab's mdp rewards.
+        # ``heading``: target yaw per env when cmd_heading_command=True. ang_z
+        # is then re-derived each step in _pre_physics_step via P-control on
+        # (target_heading - current_heading) — same as IsaacLab's
+        # UniformVelocityCommand(heading_command=True).
         self._commands_dict = {
             "base_velocity": torch.zeros(self.num_envs, 3, device=self.device),
+            "heading":       torch.zeros(self.num_envs, device=self.device),
         }
         # Per-env timer that triggers a fresh resample.
         self._cmd_resample_steps = max(
@@ -222,12 +238,13 @@ class VelocityTrackingEnv(DirectRLEnv):
                 ],
             ),
             "waist": SceneEntityCfg("robot", joint_names="waist_.*_joint"),
-            "legs_for_acc_torque": SceneEntityCfg(
+            # Matches IsaacLab G1Flat: dof_torques_l2 and dof_acc_l2 are
+            # applied to hips + knees only (NOT ankles). Penalizing ankle
+            # torques over-suppresses the small ankle commands needed to
+            # stabilize a stride.
+            "hips_and_knees": SceneEntityCfg(
                 "robot",
-                joint_names=[
-                    ".*_hip_pitch_joint",   ".*_hip_roll_joint", ".*_hip_yaw_joint",
-                    ".*_knee_joint",        ".*_ankle_pitch_joint", ".*_ankle_roll_joint",
-                ],
+                joint_names=[".*_hip_.*_joint", ".*_knee_joint"],
             ),
             # Contact sensor cfgs.
             "feet_contact":  SceneEntityCfg(
@@ -248,18 +265,21 @@ class VelocityTrackingEnv(DirectRLEnv):
     # Step pipeline
     # -------------------------------------------------------------------
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
+        # Heading-based ang_z (IsaacLab parity). When cmd_heading_command is
+        # True, this rewrites _commands_dict["base_velocity"][:, 2] based on
+        # the current heading error toward the per-env target heading. Runs
+        # BEFORE obs/reward so they see a consistent derived ang_z.
+        event_fn.update_heading_command_ang_z(self)
+
         # Track previous action for action-rate reward and last_action obs.
         self._prev_actions = self._actions.clone()
         self._actions = actions.clamp(-1.0, 1.0)
 
-        # IsaacLab convention: target = action * scale + default_pos.
-        # The "scale" here is per-joint (LOCOMOTION_ACTION_SCALE) times a
-        # global cfg.action_scale (so 0.5 means "halve every per-joint scale").
+        # IsaacLab convention: target = action * cfg.action_scale + default_pos.
+        # Flat scale across joints (matches mdp.JointPositionActionCfg(scale=0.5,
+        # use_default_offset=True) in the reference task).
         default_pos = self.robot.data.default_joint_pos[:, self._actuated_joint_ids]
-        self._joint_targets = (
-            self._actions * (self._action_scale_tensor * self._global_action_scale)
-            + default_pos
-        )
+        self._joint_targets = self._actions * self._action_scale + default_pos
         lo = self.robot.data.soft_joint_pos_limits[:, self._actuated_joint_ids, 0]
         hi = self.robot.data.soft_joint_pos_limits[:, self._actuated_joint_ids, 1]
         self._joint_targets = self._joint_targets.clamp(lo, hi)

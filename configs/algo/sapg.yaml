@@ -14,5 +14,8 @@ name: sapg
 # at the CLI (algo.num_blocks=6) if you want to reproduce that exactly.
 num_blocks: 8
 extra_param_size: 32         # learned per-block embedding dimension
-entropy_coef_scale: 0.002    # scales per-block entropy range [0.5*scale .. 0]
+entropy_coef_scale: 0.005    # scales per-block entropy range [0.5*scale .. 0].
+                             # Block 0 gets 0.0025 (most exploration), block K-1
+                             # gets 0 (exploit/deploy). Bumped from 0.002 since
+                             # locomotion needs more exploration than reorient.
 off_policy_ratio: 1.0        # number of extra follower blocks to sample

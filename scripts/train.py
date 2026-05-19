@@ -103,17 +103,25 @@ def main(cfg: DictConfig):
     task_tag = getattr(cfg.task, "wandb_tag", None) or cfg.task.log_name
     tags = [task_tag, cfg.algo.name]
 
-    wandb.init(
-        project  = wandb_project,
-        name     = wandb_name,
-        group    = f"{cfg.task.log_name}_{cfg.algo.name}",
-        job_type = "train",
-        tags     = tags,
-        notes    = cfg.wandb.get("notes", ""),
-        dir      = str(run_dir / "wandb"),
-        mode     = cfg.wandb.mode,
-        config   = OmegaConf.to_container(cfg, resolve=True),
-    )
+    # rsl_rl's OnPolicyRunner manages its own wandb session when
+    # logger="wandb" in its config — initializing wandb here would conflict.
+    # The trainer reads cfg.task.wandb_project + run_dir.name and passes them
+    # through to rsl_rl so the run still lands in the right project.
+    if cfg.algo.name == "rsl_rl_ppo":
+        print(f"[train] rsl_rl_ppo: wandb managed by rsl_rl "
+              f"(project={wandb_project}, run={wandb_name})")
+    else:
+        wandb.init(
+            project  = wandb_project,
+            name     = wandb_name,
+            group    = f"{cfg.task.log_name}_{cfg.algo.name}",
+            job_type = "train",
+            tags     = tags,
+            notes    = cfg.wandb.get("notes", ""),
+            dir      = str(run_dir / "wandb"),
+            mode     = cfg.wandb.mode,
+            config   = OmegaConf.to_container(cfg, resolve=True),
+        )
 
     # ── Build env_cfg ──────────────────────────────────────────────────────
     module      = importlib.import_module(cfg.task.env_cfg_module)
@@ -131,6 +139,7 @@ def main(cfg: DictConfig):
         "env_cfg_module", "env_cfg_class",
         "evaluator_module", "evaluator_class",
         "wandb_project", "wandb_tag",
+        "max_iterations",   # task-level training budget; pushed onto cfg.algo below
         "cameras", "viewer",
         "eval",     # eval-time overrides; consumed by scripts/eval.py only
     }
@@ -140,6 +149,19 @@ def main(cfg: DictConfig):
         if hasattr(env_cfg, key):
             setattr(env_cfg, key, val)
 
+    # Task-level training budget overrides the algo's fallback. ``max_iterations``
+    # is a function of task difficulty + per-iter sample count, not of the
+    # specific RL algorithm, so it lives on the task yaml. If a task omits it
+    # we fall back to the algo's default and warn.
+    task_max_iter = task_dict.get("max_iterations", None)
+    if task_max_iter is not None:
+        cfg.algo.max_iterations = int(task_max_iter)
+        print(f"[train] max_iterations = {task_max_iter} (from task yaml)")
+    else:
+        print(f"[train] WARNING: task '{cfg.task.log_name}' yaml has no "
+              f"max_iterations; falling back to algo default "
+              f"{cfg.algo.max_iterations}")
+
     env = gym.make(cfg.task.gym_id, cfg=env_cfg)
 
     # ── Trainer ───────────────────────────────────────────────────────────
@@ -148,7 +170,8 @@ def main(cfg: DictConfig):
     trainer.run()
 
     # ── Cleanup ───────────────────────────────────────────────────────────
-    wandb.finish()
+    if wandb.run is not None:    # closes whichever run is active (ours or rsl_rl's)
+        wandb.finish()
     env.close()
     simulation_app.close()
 

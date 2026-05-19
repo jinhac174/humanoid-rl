@@ -36,7 +36,15 @@ def _uniform(num: int, lo: float, hi: float, device: torch.device) -> torch.Tens
 def sample_velocity_commands(
     env: "VelocityTrackingEnv", env_ids: torch.Tensor | None,
 ) -> None:
-    """Resample (lin_x, lin_y, ang_z). ``env_ids=None`` means all envs."""
+    """Resample the velocity command for the given envs.
+
+    When ``cfg.cmd_heading_command`` is True, ang_z is NOT directly sampled —
+    we sample a target heading in ``[-pi, pi]`` and store it on
+    ``env._commands_dict["heading"]``. The runtime ang_z then gets derived
+    every step via P-control on the heading error (see
+    :func:`update_heading_command_ang_z`). This matches IsaacLab's
+    ``mdp.UniformVelocityCommand(heading_command=True)``.
+    """
     if env_ids is None:
         env_ids = torch.arange(env.num_envs, device=env.device)
     if env_ids.numel() == 0:
@@ -48,18 +56,61 @@ def sample_velocity_commands(
 
     lin_x = _uniform(n, *cfg.cmd_lin_vel_x_range, device=device)
     lin_y = _uniform(n, *cfg.cmd_lin_vel_y_range, device=device)
-    ang_z = _uniform(n, *cfg.cmd_ang_vel_z_range, device=device)
 
-    # A fraction of envs get a "stand still" command (zero everything).
+    if cfg.cmd_heading_command:
+        # Sample target heading; ang_z gets re-derived every step from the error.
+        heading = _uniform(n, -math.pi, math.pi, device=device)
+        env._commands_dict["heading"][env_ids] = heading
+        ang_z = torch.zeros(n, device=device)  # placeholder; overwritten next step
+    else:
+        ang_z = _uniform(n, *cfg.cmd_ang_vel_z_range, device=device)
+
+    # A fraction of envs get a "stand still" command (zero everything,
+    # including freezing the heading target to the current heading so the
+    # P-controller produces ang_z=0).
     if cfg.cmd_standing_prob > 0.0:
         stand_mask = torch.rand(n, device=device) < cfg.cmd_standing_prob
         lin_x = torch.where(stand_mask, torch.zeros_like(lin_x), lin_x)
         lin_y = torch.where(stand_mask, torch.zeros_like(lin_y), lin_y)
         ang_z = torch.where(stand_mask, torch.zeros_like(ang_z), ang_z)
+        if cfg.cmd_heading_command and stand_mask.any():
+            cur_heading = _wrap_to_pi(_get_yaw(env, env_ids[stand_mask]))
+            env._commands_dict["heading"][env_ids[stand_mask]] = cur_heading
 
     env._commands_dict["base_velocity"][env_ids] = torch.stack(
         [lin_x, lin_y, ang_z], dim=-1
     )
+
+
+def _wrap_to_pi(angle: torch.Tensor) -> torch.Tensor:
+    """Map to [-pi, pi]."""
+    return torch.atan2(torch.sin(angle), torch.cos(angle))
+
+
+def _get_yaw(env: "VelocityTrackingEnv", env_ids: torch.Tensor) -> torch.Tensor:
+    """Current robot yaw in world frame, derived from root quaternion (w, x, y, z)."""
+    q = env.robot.data.root_quat_w[env_ids]   # (M, 4) wxyz
+    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    # yaw = atan2(2(wz + xy), 1 - 2(y^2 + z^2))
+    return torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def update_heading_command_ang_z(env: "VelocityTrackingEnv") -> None:
+    """Recompute ang_z from heading error each step (P-control).
+
+    Called from :class:`VelocityTrackingEnv._pre_physics_step` BEFORE the
+    action is applied, so the obs and reward downstream see a consistent
+    derived ang_z. No-op when ``cfg.cmd_heading_command`` is False.
+    """
+    cfg = env.cfg
+    if not cfg.cmd_heading_command:
+        return
+    target_heading = env._commands_dict["heading"]      # (N,)
+    current_heading = _get_yaw(env, torch.arange(env.num_envs, device=env.device))
+    error = _wrap_to_pi(target_heading - current_heading)
+    ang_z_max = float(cfg.cmd_ang_vel_z_range[1])
+    ang_z = (cfg.cmd_heading_stiffness * error).clamp(-ang_z_max, ang_z_max)
+    env._commands_dict["base_velocity"][:, 2] = ang_z
 
 
 def reset_robot(env: "VelocityTrackingEnv", env_ids: torch.Tensor) -> None:

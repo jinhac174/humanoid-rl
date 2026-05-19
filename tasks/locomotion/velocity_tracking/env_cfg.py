@@ -111,11 +111,16 @@ class VelocityTrackingEnvCfg(DirectRLEnvCfg):
     action_scale: float = 0.5
 
     # ── Velocity commands (UniformVelocityCommand-equivalent) ──────────
-    cmd_lin_vel_x_range:  tuple = (0.0, 1.0)        # forward only on first version
-    cmd_lin_vel_y_range:  tuple = (0.0, 0.0)
+    cmd_lin_vel_x_range:  tuple = (0.0, 1.0)        # match IsaacLab G1Flat
+    cmd_lin_vel_y_range:  tuple = (-0.5, 0.5)
     cmd_ang_vel_z_range:  tuple = (-1.0, 1.0)
     cmd_resampling_time_s: float = 10.0
     cmd_standing_prob:    float = 0.02              # fraction sampled with all-zero command
+    # Heading-based ang_z control (IsaacLab convention): instead of sampling
+    # ang_z directly, sample a target heading and derive ang_z each step via
+    # P-control on the heading error. Produces a smoother yaw signal.
+    cmd_heading_command:   bool  = True
+    cmd_heading_stiffness: float = 0.5
 
     # ── Reset noise ────────────────────────────────────────────────────
     reset_pose_x_range:  tuple = (-0.5, 0.5)
@@ -174,3 +179,12 @@ class VelocityTrackingEnvCfg(DirectRLEnvCfg):
     obs_noise_joint_pos:       float = 0.01
     obs_noise_joint_vel:       float = 1.5
     obs_noise_enabled:         bool  = True
+
+    def __post_init__(self):
+        if hasattr(super(), "__post_init__"):
+            super().__post_init__()
+        # Match IsaacLab's velocity_env_cfg: tick the contact sensor every
+        # physics step so feet_air_time and illegal-contact detection don't
+        # alias to control-step boundaries.
+        if self.scene.contact_forces is not None:
+            self.scene.contact_forces.update_period = self.sim.dt

@@ -40,6 +40,7 @@ _TASK_YAML_SCRIPT_KEYS = {
     "env_cfg_module", "env_cfg_class",
     "evaluator_module", "evaluator_class",
     "wandb_project", "wandb_tag",
+    "max_iterations",
     "cameras", "viewer",
     "eval",
 }

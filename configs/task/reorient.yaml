@@ -16,6 +16,10 @@ wandb_tag: cube_reorient
 
 episode_length_s: 10.0
 
+# Training duration. SAPG runs in earlier experiments converged around 22k iters.
+# Lives on the task (not the algo) because it's a function of task difficulty.
+max_iterations: 30000
+
 # Number of cube keypoints used for reorientation scoring. 8 = all corners
 # (default, symmetric). 4 = SAPG donor's tetrahedral subset (ablation only).
 # Changing this rebuilds the obs vector — must match between train and eval.

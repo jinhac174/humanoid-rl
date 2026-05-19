@@ -60,8 +60,8 @@ def compute_reward(env: "VelocityTrackingEnv") -> torch.Tensor:
     ang_vel_xy   = mdp.ang_vel_xy_l2(env, asset_cfg=s["robot_all"])
     flat_orient  = mdp.flat_orientation_l2(env, asset_cfg=s["robot_all"])
     action_rate  = mdp.action_rate_l2(env)
-    dof_torques  = mdp.joint_torques_l2(env, asset_cfg=s["legs_for_acc_torque"])
-    dof_acc      = mdp.joint_acc_l2(env, asset_cfg=s["legs_for_acc_torque"])
+    dof_torques  = mdp.joint_torques_l2(env, asset_cfg=s["hips_and_knees"])
+    dof_acc      = mdp.joint_acc_l2(env, asset_cfg=s["hips_and_knees"])
     pos_limits_ankle = mdp.joint_pos_limits(env, asset_cfg=s["ankles"])
     feet_slide   = locomotion_mdp.rewards.feet_slide(
         env, sensor_cfg=s["feet_contact"], asset_cfg=s["feet_robot"],
