@@ -16,45 +16,60 @@ wandb_tag: locomotion
 
 episode_length_s: 20.0
 
+# Training duration. Matches IsaacLab's G1FlatPPORunnerCfg.max_iterations=1500.
+# Lives on the task (not the algo) because the right number depends on the
+# task difficulty + sample-count-per-iter, not on PPO vs SAPG vs EPO vs rsl_rl.
+max_iterations: 1500
+
 # ── Action ───────────────────────────────────────────────────────────────
 # target = action * cfg.action_scale * per_joint_scale + default_pose
 action_scale: 0.5
 
 # ── Velocity command ranges ──────────────────────────────────────────────
-# First-iteration: forward-only walking with yaw turning. Widen lin_y once
-# the policy can walk straight and turn reliably.
-cmd_lin_vel_x_range: [0.0, 1.0]
-cmd_lin_vel_y_range: [0.0, 0.0]
-cmd_ang_vel_z_range: [-1.0, 1.0]
+# Match IsaacLab G1Flat: lin_x [0, 1], lin_y [-0.5, 0.5], ang_z [-1, 1].
+cmd_lin_vel_x_range:  [0.0, 1.0]
+cmd_lin_vel_y_range:  [-0.5, 0.5]
+cmd_ang_vel_z_range:  [-1.0, 1.0]
 cmd_resampling_time_s: 10.0
-cmd_standing_prob: 0.02
+cmd_standing_prob:     0.02
+
+# ── Heading command (IsaacLab convention) ───────────────────────────────
+# When true: each resample samples a *target heading* in (-pi, pi). Every
+# step ``ang_z`` is then computed as
+#     clip(cmd_heading_stiffness * wrap(heading - current_heading),
+#          -cmd_ang_vel_z_max, +cmd_ang_vel_z_max)
+# Produces a smoother yaw target than directly sampling ang_z.
+cmd_heading_command:   true
+cmd_heading_stiffness: 0.5
 
 # ── Push event (off for first iteration) ─────────────────────────────────
 push_enabled: false
 push_interval_s: 12.0
 push_velocity_xy_range: [-0.5, 0.5]
 
-# ── Reward weights (start from G1RoughEnvCfg defaults; tune per run) ─────
-rew_track_lin_vel_xy: 1.0
-rew_track_lin_vel_std: 0.5
-rew_track_ang_vel_z:  2.0
-rew_track_ang_vel_std: 0.5
-rew_feet_air_time:           0.25
+# ── Reward weights (mirror IsaacLab G1Flat after both Rough+Flat post-init) ──
+rew_track_lin_vel_xy:        1.0    # G1Rough
+rew_track_lin_vel_std:       0.5
+rew_track_ang_vel_z:         1.0    # G1Flat OVERRIDE (was 2.0 in rough)
+rew_track_ang_vel_std:       0.5
+rew_feet_air_time:           0.75   # G1Flat OVERRIDE (was 0.25 in rough; this is the *primary* stepping incentive)
 rew_feet_air_time_threshold: 0.4
 
 pen_termination:        200.0
-pen_lin_vel_z:          0.0       # disabled in G1RoughEnvCfg
+pen_lin_vel_z:          0.2        # G1Flat OVERRIDE (rough was 0; penalize vertical bounce)
 pen_ang_vel_xy:         0.05
 pen_flat_orientation:   1.0
 pen_action_rate:        0.005
-pen_dof_torques:        1.5e-7
-pen_dof_acc:            1.25e-7
+pen_dof_torques:        2.0e-6     # G1Flat OVERRIDE (was 1.5e-7 in rough; 13x stronger efficiency pressure)
+pen_dof_acc:            1.0e-7     # G1Flat OVERRIDE (was 1.25e-7 in rough)
 pen_dof_pos_limits:     1.0
 pen_feet_slide:         0.1
 pen_joint_dev_hip:      0.1
 pen_joint_dev_arms:     0.1
 pen_joint_dev_hands:    0.05
-pen_joint_dev_waist:    0.1
+pen_joint_dev_waist:    0.3      # bumped 0.1 → 0.3 to fix the backward-lean
+                                 # waist posture seen in the prior checkpoints.
+                                 # See memory: project-locomotion-waist-lean.
 
 # ── Termination ──────────────────────────────────────────────────────────
 # Episode terminates (fires the -200 pen_termination) when ANY trip.
