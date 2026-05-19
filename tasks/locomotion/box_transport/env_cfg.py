@@ -40,8 +40,17 @@ RIGHT_PALM_BODY = "right_hand_palm_link"
 TABLE_SIZE = (1.0, 1.0, 0.78)            # (sx, sy, sz). Top surface at z = sz.
 TABLE_TOP_Z = TABLE_SIZE[2]              # 0.78 m
 
-START_TABLE_POS = (1.3, 0.0, TABLE_SIZE[2] / 2)   # center (z is geometric center)
-TARGET_TABLE_POS = (4.0, 0.0, TABLE_SIZE[2] / 2)  # 2.7 m gap centre-to-centre
+START_TABLE_POS = (2.5, 0.0, TABLE_SIZE[2] / 2)    # 2.5 m forward of spawn —
+                                                   # robot walks straight in to
+                                                   # grab the box.
+TARGET_TABLE_POS = (2.5, -3.0, TABLE_SIZE[2] / 2)  # 3.0 m to the RIGHT of start.
+                                                   # L-shaped trajectory: walk
+                                                   # +x to grab, then turn 90°
+                                                   # and walk -y to place. The
+                                                   # off-axis target avoids the
+                                                   # "autocmd points through the
+                                                   # start table" pathology of
+                                                   # a co-linear layout.
 
 BOX_SIZE = (0.30, 0.30, 0.30)            # 30 cm cube — fits between two G1 palms
 BOX_MASS = 1.5                           # kg — light enough to lift, heavy enough to feel
@@ -57,10 +66,16 @@ TARGET_XY_HALF_RANGE = (0.20, 0.20)
 TARGET_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.001  # tiny epsilon over the surface
 
 # Drop threshold: episode ends when box.z falls below this (hit floor).
-BOX_DROP_Z = 0.10
+# Box CENTER resting on the floor is at BOX_SIZE/2 = 0.15. Threshold of 0.20
+# fires once the box is clearly off any table and almost on the floor.
+BOX_DROP_Z = 0.20
 
 # Lift threshold: box.z above this counts as "lifted off the start table".
-BOX_LIFT_Z = TABLE_TOP_Z + 0.08          # 8 cm above the start table top
+# Box center at rest on the table is TABLE_TOP_Z + BOX_SIZE/2 = 0.93. We
+# require the center to rise at least 10 cm above the resting position to
+# count as "lifted" — otherwise the flag would fire at spawn before the
+# policy has done anything.
+BOX_LIFT_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.10   # = 1.03 m
 
 # Bimanual-contact gating: both palms within this distance from the box
 # centre to count as "gripping".
@@ -209,8 +224,12 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     autocmd_lin_vel_max:   float = 1.0
     autocmd_ang_vel_max:   float = 1.0
     autocmd_heading_stiffness: float = 0.5
-    # Distance below which we set lin command to 0 (don't overshoot the target).
-    autocmd_stop_distance: float = 0.30
+    # Distance below which we set lin command to 0. Must be large enough that
+    # the robot stops IN FRONT of the table, not inside its footprint. Box at
+    # table center 2.5; table x-extent ±0.5 → table front face at x=2.0; so
+    # stop at xy-distance ≥ 0.60 puts the pelvis at x ≤ 1.90, with ~0.1 m
+    # clearance to the front face. Same geometry applies at the target table.
+    autocmd_stop_distance: float = 0.60
 
     # ── Reset noise (robot spawn) ──────────────────────────────────────
     reset_pose_x_range:  tuple = (-0.20, 0.20)
@@ -279,7 +298,8 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     termination_base_height:   float = 0.4
     termination_gravity_z:     float = -0.4
     illegal_contact_threshold: float = 1.0
-    # Box on the floor.
+    # Box on the floor. See BOX_DROP_Z comment — box center below ~0.20
+    # means it is essentially at floor level (rests at 0.15).
     box_drop_z:                float = BOX_DROP_Z
     # Success: box on target table within tolerance for N consecutive steps.
     success_steps_required:    int   = 25      # 0.5 s at 50 Hz
