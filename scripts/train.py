@@ -167,6 +167,19 @@ def main(cfg: DictConfig):
     # ── Trainer ───────────────────────────────────────────────────────────
     from algos import TRAINER_REGISTRY
     trainer = TRAINER_REGISTRY[cfg.algo.name](env=env, cfg=cfg, run_dir=run_dir)
+
+    # Optional warm-start: load a phase-1 (or any task with a 141-d
+    # locomotion-prefix obs) checkpoint into the freshly built trainer.
+    # Handles obs-dim mismatch by zero-filling the new columns of the
+    # first weight matrix. See algos/warm_start.py for details.
+    if cfg.get("checkpoint", None):
+        if cfg.algo.name == "rsl_rl_ppo":
+            print("[train] WARNING: warm-start not supported for rsl_rl_ppo "
+                  "(trainer manages its own state); ignoring cfg.checkpoint")
+        else:
+            from algos.warm_start import warm_start_load
+            warm_start_load(trainer, cfg.checkpoint)
+
     trainer.run()
 
     # ── Cleanup ───────────────────────────────────────────────────────────
