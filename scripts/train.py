@@ -21,12 +21,15 @@ from isaaclab.app import AppLauncher
 def next_run_index(base_dir: Path, algo: str) -> int:
     """Return the next free NN under ``base_dir`` for runs of this algo.
 
-    Scans for sibling directories matching ``<algo>_NN`` and returns
-    ``max(NN) + 1`` (or 0 if none exist). Pure read-only.
+    Scans for sibling directories matching ``<algo>_NN`` OR
+    ``<algo>_NN_<tag>`` (e.g. ``ppo_01_warmstart``) and returns
+    ``max(NN) + 1`` (or 0 if none exist). Counting the tagged dirs is
+    what stops a warm-start run from picking an NN that a from-scratch
+    run already used (or vice-versa) and colliding on mkdir. Read-only.
     """
     if not base_dir.exists():
         return 0
-    pat = re.compile(rf"^{re.escape(algo)}_(\d+)$")
+    pat = re.compile(rf"^{re.escape(algo)}_(\d+)(?:_.*)?$")
     ids = []
     for p in base_dir.iterdir():
         if not p.is_dir():
