@@ -50,6 +50,7 @@ import torch
 
 import isaaclab.envs.mdp as mdp
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
+from isaaclab.utils.math import quat_rotate_inverse
 
 if TYPE_CHECKING:
     from .env import BoxTransportEnv
@@ -80,9 +81,18 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     l_palm_w = env.robot.data.body_pos_w[:, env._left_palm_body_id]
     r_palm_w = env.robot.data.body_pos_w[:, env._right_palm_body_id]
 
-    # ── Manipulation milestone 1 — bimanual contact (one-shot) ─────────
+    # ── Dense arm-reach shaping ────────────────────────────────────────
+    # exp kernel on the mean palm-to-box distance. Always on: ≈0 while the
+    # robot is still walking in (palms far from box), ramps up smoothly as
+    # the arms approach, and stays high while the box is gripped during the
+    # carry. This is the continuous gradient that guides the arms — the
+    # bimanual_contact bonus below is too sparse to discover on its own.
     l_palm_dist = (l_palm_w - box_pos_w).norm(dim=-1)
     r_palm_dist = (r_palm_w - box_pos_w).norm(dim=-1)
+    mean_palm_dist = 0.5 * (l_palm_dist + r_palm_dist)
+    reach = torch.exp(-(mean_palm_dist ** 2) / (cfg.rew_reach_std ** 2))
+
+    # ── Manipulation milestone 1 — bimanual contact (one-shot) ─────────
     grip = float(env._grip_distance)
     both_palms_close = (l_palm_dist < grip) & (r_palm_dist < grip)
     bimanual_event = both_palms_close & (~env._bimanual_contact_achieved)
@@ -122,11 +132,24 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     dev_hands = mdp.joint_deviation_l1(env, asset_cfg=s["hands"])
     dev_waist = mdp.joint_deviation_l1(env, asset_cfg=s["waist"])
 
+    # ── Torso-upright penalty ──────────────────────────────────────────
+    # Gravity projected into the torso_link frame: [0,0,-1] when the torso
+    # is vertical, xy-magnitude grows as it leans. Catches a backward torso
+    # lean even when the pelvis itself stays level — flat_orientation_l2
+    # above only sees the pelvis.
+    torso_quat = env.robot.data.body_quat_w[:, env._torso_body_id]    # (N, 4)
+    grav_w = torch.tensor(
+        [0.0, 0.0, -1.0], device=env.device,
+    ).expand(env.num_envs, 3)
+    torso_grav = quat_rotate_inverse(torso_quat, grav_w)              # (N, 3)
+    torso_upright = torso_grav[:, :2].square().sum(dim=-1)            # (N,)
+
     # ── Weighted sum ──────────────────────────────────────────────────
     reward = (
         + cfg.rew_track_lin_vel_xy * track_lin_xy_yaw
         + cfg.rew_track_ang_vel_z  * track_ang_z
         + cfg.rew_feet_air_time    * feet_air_time
+        + cfg.rew_reach            * reach
         + cfg.rew_bimanual_contact * bimanual_contact
         + cfg.rew_lift             * lift
         + cfg.rew_place_bonus      * place_bonus
@@ -135,6 +158,7 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
         - cfg.pen_lin_vel_z        * lin_vel_z
         - cfg.pen_ang_vel_xy       * ang_vel_xy
         - cfg.pen_flat_orientation * flat_orient
+        - cfg.pen_torso_upright    * torso_upright
         - cfg.pen_action_rate      * action_rate
         - cfg.pen_dof_torques      * dof_torques
         - cfg.pen_dof_acc          * dof_acc
@@ -151,6 +175,7 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     extras["reward/track_lin_vel_xy"]    = track_lin_xy_yaw
     extras["reward/track_ang_vel_z"]     = track_ang_z
     extras["reward/feet_air_time"]       = feet_air_time
+    extras["reward/reach"]               = reach
     extras["reward/bimanual_contact"]    = bimanual_contact
     extras["reward/lift"]                = lift
     extras["reward/place_bonus"]         = place_bonus
@@ -159,6 +184,7 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     extras["reward/lin_vel_z"]           = lin_vel_z
     extras["reward/ang_vel_xy"]          = ang_vel_xy
     extras["reward/flat_orientation"]    = flat_orient
+    extras["reward/torso_upright"]       = torso_upright
     extras["reward/action_rate"]         = action_rate
     extras["reward/dof_torques"]         = dof_torques
     extras["reward/dof_acc"]             = dof_acc

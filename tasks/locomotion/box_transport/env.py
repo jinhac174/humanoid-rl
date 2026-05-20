@@ -53,7 +53,7 @@ from .env_cfg import (
     LEFT_PALM_BODY,
     RIGHT_FOOT_BODY,
     RIGHT_PALM_BODY,
-    TARGET_TABLE_POS,
+    TARGET_ANCHOR_POS,
     TARGET_Z,
     TORSO_BODY,
     BoxTransportEnvCfg,
@@ -113,9 +113,11 @@ class BoxTransportEnv(DirectRLEnv):
 
         self._action_scale = float(cfg.action_scale)
 
-        # -- Body ids (palms, feet, torso) --
+        # -- Body ids (palms, torso) — articulation body index space, used
+        #    to read body_pos_w / body_quat_w. --
         self._left_palm_body_id  = self.robot.find_bodies(LEFT_PALM_BODY)[0][0]
         self._right_palm_body_id = self.robot.find_bodies(RIGHT_PALM_BODY)[0][0]
+        self._torso_body_id      = self.robot.find_bodies(TORSO_BODY)[0][0]
 
         feet_sensor_ids, _ = self.contact_sensor.find_bodies(
             [LEFT_FOOT_BODY, RIGHT_FOOT_BODY],
@@ -141,11 +143,12 @@ class BoxTransportEnv(DirectRLEnv):
         }
 
         # -- Per-env target pose (filled by events.reset_target at episode start) --
-        # target_table_center_w is the world-frame center of each env's
-        # target table (env_origins + target_table_pos). Resolved once here.
+        # target_anchor_w is the world-frame anchor near the front edge of
+        # each env's target table (env_origins + TARGET_ANCHOR_POS); the
+        # per-episode target is sampled in a small box around it.
         env_origins = self.scene.env_origins                         # (N, 3)
-        self._target_table_center_w = env_origins + torch.tensor(
-            TARGET_TABLE_POS, device=self.device, dtype=env_origins.dtype,
+        self._target_anchor_w = env_origins + torch.tensor(
+            TARGET_ANCHOR_POS, device=self.device, dtype=env_origins.dtype,
         )
         self._target_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
         self._target_z = float(TARGET_Z)

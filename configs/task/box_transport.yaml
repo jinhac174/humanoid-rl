@@ -24,22 +24,23 @@ autocmd_lin_vel_max:       1.0
 autocmd_ang_vel_max:       1.0
 autocmd_heading_stiffness: 0.5
 # Distance to active goal at which command magnitude reaches zero.
-# 0.60 m → pelvis stops in front of the table, not inside its footprint.
-autocmd_stop_distance:     0.60
+# 0.50 m → pelvis stops ~0.3 m in front of the (lower) table; box/target
+# now sit near the front edge so extended arms reach comfortably.
+autocmd_stop_distance:     0.50
 
 # ── Reset noise ──────────────────────────────────────────────────────
 reset_pose_x_range:   [-0.20, 0.20]
 reset_pose_y_range:   [-0.20, 0.20]
 reset_pose_yaw_range: [-0.3, 0.3]
-reset_box_xy_range:   0.10
-# Target xy half-extent on the target-table top (m).
-reset_target_xy_half: [0.20, 0.20]
+reset_box_xy_range:   0.05      # small — box sits near the table edge
+# Target xy half-range sampled around the front-edge anchor (m).
+reset_target_xy_half: [0.12, 0.10]
 
 # ── Reward weights ────────────────────────────────────────────────────
-# Architecture: phase-1 velocity tracking reward applied against the
-# auto-derived command (events.update_autocmd) drives navigation; sparse
-# manipulation milestones drive the grasp/lift/place. The "walk-to-X"
-# behaviour emerges from the policy tracking the high-level command.
+# Navigation = phase-1 velocity-tracking reward against the auto-derived
+# command. Arm guidance = DENSE reach shaping (rew_reach). Manipulation =
+# sparse milestones (bimanual_contact / lift / place). Locomotion
+# regularizers restored to phase-1 values for gait quality.
 
 # Locomotion tracking (same defaults as configs/task/velocity_tracking.yaml).
 rew_track_lin_vel_xy:         1.0
@@ -48,6 +49,13 @@ rew_track_ang_vel_z:          1.0
 rew_track_ang_vel_std:        0.5
 rew_feet_air_time:            0.75
 rew_feet_air_time_threshold:  0.4
+
+# Dense arm-reach shaping — exp(-mean_palm_to_box_dist² / std²), always on.
+# Gives the arms a continuous gradient toward the box (and rewards keeping
+# the box gripped during the carry). Without this the only arm signal was
+# the sparse bimanual_contact bonus, which produced no reaching motion.
+rew_reach:                    1.5
+rew_reach_std:                0.5
 
 # Manipulation milestones.
 rew_bimanual_contact:   10.0      # sparse one-shot — both palms within GRIP_DISTANCE
@@ -58,20 +66,23 @@ rew_place_distance_tol: 0.15      # m — counts as "placed"
 # Penalties.
 pen_drop:               100.0     # one-shot when box hits the floor
 pen_termination:        200.0     # one-shot when robot falls
-pen_lin_vel_z:          0.1
-pen_ang_vel_xy:         0.025
-pen_flat_orientation:   0.5
-pen_action_rate:        0.0025
-pen_dof_torques:        1.0e-6
-pen_dof_acc:            0.5e-7
-pen_dof_pos_limits:     0.5
-pen_feet_slide:         0.05
-pen_joint_dev_hip:      0.05
-pen_joint_dev_arms:     0.05      # lower than locomotion — arms must move
-pen_joint_dev_hands:    0.025
-# POSTURE FIX: bumped from 0.1 → 0.3 to address the backward waist lean
-# from the locomotion checkpoints.
-pen_joint_dev_waist:    0.3
+# Locomotion regularizers — restored to phase-1 (velocity_tracking) values.
+# The earlier 0.5x reduction degraded gait quality (weird/jumpy gaits).
+pen_lin_vel_z:          0.2
+pen_ang_vel_xy:         0.05
+pen_flat_orientation:   1.0       # pelvis upright
+pen_torso_upright:      1.0       # torso_link upright — direct fix for the lean
+pen_action_rate:        0.005
+pen_dof_torques:        2.0e-6
+pen_dof_acc:            1.0e-7
+pen_dof_pos_limits:     1.0
+pen_feet_slide:         0.1
+pen_joint_dev_hip:      0.1
+pen_joint_dev_arms:     0.02      # very low — arms must reach for manipulation
+pen_joint_dev_hands:    0.01
+# POSTURE: 0.3 did not fix the backward lean; bumped to 0.6 and backed by
+# the pen_torso_upright term above.
+pen_joint_dev_waist:    0.6
 
 # ── Termination ──────────────────────────────────────────────────────
 termination_base_height:   0.4
@@ -100,17 +111,17 @@ eval:
 
 # ── Cameras for the rendered MP4 (tracking cameras, robot-relative) ──
 # See evaluate.py: each frame, eye/lookat are translated by the robot's
-# current world XY (Z absolute). Scene is now L-shaped — start table
-# at (2.5, 0), target table at (2.5, -3.0). Lookat is at the midpoint
-# of the action (2.5, -1.5), with the eyes pulled back-up so both
-# tables and the robot fit in scripts/scene_load.py's static view.
+# current world XY (Z absolute). L-shaped scene — start table at (2.5, 0),
+# target table at (2.5, -2.0). Lookat sits roughly at the action centroid
+# and the eyes are pulled back so both tables + robot fit the static
+# scripts/scene_load.py view.
 cameras:
   follow:
-    eye:    [-2.0, 4.5, 2.8]    # back-left-up of spawn; covers walk-in + turn
-    lookat: [2.5, -1.5, 0.5]    # midpoint of the L-shape action
+    eye:    [-2.0, 4.5, 2.6]    # back-left-up of spawn; covers walk-in + turn
+    lookat: [2.0, -0.9, 0.4]    # action centroid (tables lowered to 0.55)
   side:
     eye:    [5.5, 4.0, 2.0]     # forward-left-up; profile of the L
-    lookat: [2.5, -1.5, 0.5]
+    lookat: [2.0, -0.9, 0.4]
 
 viewer:
   resolution:  [1280, 720]

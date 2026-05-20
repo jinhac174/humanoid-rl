@@ -122,7 +122,11 @@ def reset_box(env: "BoxTransportEnv", env_ids: torch.Tensor) -> None:
 
 
 def reset_target(env: "BoxTransportEnv", env_ids: torch.Tensor) -> None:
-    """Sample target xy on the target-table top, store in env._target_pos_w."""
+    """Sample the target xy near the target-table front edge.
+
+    Sampled in a small box around ``env._target_anchor_w`` (which sits near
+    the robot-facing edge of the target table). Stored in ``env._target_pos_w``.
+    """
     cfg = env.cfg
     n = env_ids.numel()
     device = env.device
@@ -131,8 +135,8 @@ def reset_target(env: "BoxTransportEnv", env_ids: torch.Tensor) -> None:
     dx = _uniform(n, -hx, hx, device=device)
     dy = _uniform(n, -hy, hy, device=device)
     tgt = torch.zeros(n, 3, device=device)
-    tgt[:, 0] = env._target_table_center_w[env_ids, 0] + dx
-    tgt[:, 1] = env._target_table_center_w[env_ids, 1] + dy
+    tgt[:, 0] = env._target_anchor_w[env_ids, 0] + dx
+    tgt[:, 1] = env._target_anchor_w[env_ids, 1] + dy
     tgt[:, 2] = env._target_z
 
     env._target_pos_w[env_ids] = tgt

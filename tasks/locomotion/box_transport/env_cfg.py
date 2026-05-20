@@ -35,47 +35,51 @@ RIGHT_PALM_BODY = "right_hand_palm_link"
 
 
 # --- Scene layout constants (meters, world frame) ------------------------
-# Both tables sit along +x in front of the robot's spawn. Robot spawns at
-# the world origin (0,0,*) and faces +x.
-TABLE_SIZE = (1.0, 1.0, 0.78)            # (sx, sy, sz). Top surface at z = sz.
-TABLE_TOP_Z = TABLE_SIZE[2]              # 0.78 m
+# Robot spawns at the world origin (0,0,*) facing +x. L-shaped task: walk
+# +x to the start table, grab the box, turn 90° and walk -y to the target.
+TABLE_SIZE = (1.0, 1.0, 0.55)            # (sx, sy, sz). Height lowered 0.78 → 0.55
+                                         # so the box sits at a comfortable
+                                         # grab height for the G1 (pelvis 0.74).
+TABLE_TOP_Z = TABLE_SIZE[2]              # 0.55 m
 
-START_TABLE_POS = (2.5, 0.0, TABLE_SIZE[2] / 2)    # 2.5 m forward of spawn —
-                                                   # robot walks straight in to
-                                                   # grab the box.
-TARGET_TABLE_POS = (2.5, -3.0, TABLE_SIZE[2] / 2)  # 3.0 m to the RIGHT of start.
-                                                   # L-shaped trajectory: walk
-                                                   # +x to grab, then turn 90°
-                                                   # and walk -y to place. The
-                                                   # off-axis target avoids the
-                                                   # "autocmd points through the
-                                                   # start table" pathology of
-                                                   # a co-linear layout.
+START_TABLE_POS  = (2.5,  0.0, TABLE_SIZE[2] / 2)   # 2.5 m forward of spawn
+TARGET_TABLE_POS = (2.5, -2.0, TABLE_SIZE[2] / 2)   # 2.0 m to the RIGHT of start
+                                                    # (pulled in from 3.0 — shorter
+                                                    # carry). Off-axis so the
+                                                    # autocmd never points through
+                                                    # the start table.
 
-BOX_SIZE = (0.30, 0.30, 0.30)            # 30 cm cube — fits between two G1 palms
-BOX_MASS = 1.5                           # kg — light enough to lift, heavy enough to feel
+BOX_SIZE = (0.24, 0.24, 0.24)            # 24 cm cube (was 30) — easier bimanual grip
+BOX_MASS = 0.8                           # kg (was 1.5) — scaled down with the box
+
+# Box sits toward the FRONT (robot-facing, smaller-x) edge of the start
+# table so the robot can reach it without standing inside the footprint.
 BOX_SPAWN_POS = (
-    START_TABLE_POS[0],
+    START_TABLE_POS[0] - 0.30,             # x = 2.20  (box front face 0.08 m in)
     START_TABLE_POS[1],
     TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.01,  # 1 cm above the table surface
 )
 
-# Target placement: anywhere on the target-table top within this xy half-extent
-# of the table center. Z is fixed at table top + box half-height (box resting).
-TARGET_XY_HALF_RANGE = (0.20, 0.20)
+# Target: sampled near the FRONT (robot-facing, +y) edge of the target
+# table — same reasoning, the robot reaches over from in front.
+TARGET_ANCHOR_POS = (
+    TARGET_TABLE_POS[0],
+    TARGET_TABLE_POS[1] + TABLE_SIZE[1] / 2 - 0.30,   # y = -1.80
+    TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.001,
+)
+# Uniform half-range sampled around TARGET_ANCHOR_POS each reset.
+TARGET_XY_HALF_RANGE = (0.12, 0.10)
 TARGET_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.001  # tiny epsilon over the surface
 
 # Drop threshold: episode ends when box.z falls below this (hit floor).
-# Box CENTER resting on the floor is at BOX_SIZE/2 = 0.15. Threshold of 0.20
-# fires once the box is clearly off any table and almost on the floor.
+# Box CENTER resting on the floor is at BOX_SIZE/2 = 0.12; 0.20 fires once
+# the box is clearly off any table and almost on the floor.
 BOX_DROP_Z = 0.20
 
-# Lift threshold: box.z above this counts as "lifted off the start table".
-# Box center at rest on the table is TABLE_TOP_Z + BOX_SIZE/2 = 0.93. We
-# require the center to rise at least 10 cm above the resting position to
-# count as "lifted" — otherwise the flag would fire at spawn before the
-# policy has done anything.
-BOX_LIFT_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.10   # = 1.03 m
+# Lift threshold: box center must rise 10 cm above its table-rest height
+# (TABLE_TOP_Z + BOX_SIZE/2 = 0.67) to count as lifted — otherwise the
+# flag would fire at spawn before the policy has done anything.
+BOX_LIFT_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.10   # = 0.77 m
 
 # Bimanual-contact gating: both palms within this distance from the box
 # centre to count as "gripping".
@@ -224,12 +228,11 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     autocmd_lin_vel_max:   float = 1.0
     autocmd_ang_vel_max:   float = 1.0
     autocmd_heading_stiffness: float = 0.5
-    # Distance below which we set lin command to 0. Must be large enough that
-    # the robot stops IN FRONT of the table, not inside its footprint. Box at
-    # table center 2.5; table x-extent ±0.5 → table front face at x=2.0; so
-    # stop at xy-distance ≥ 0.60 puts the pelvis at x ≤ 1.90, with ~0.1 m
-    # clearance to the front face. Same geometry applies at the target table.
-    autocmd_stop_distance: float = 0.60
+    # Distance to the active goal at which command magnitude reaches zero.
+    # Box / target now sit near the front edge of their tables, so 0.50 m
+    # puts the pelvis ~0.3 m in front of the table face — close enough that
+    # extended arms reach the box, far enough that the body stays clear.
+    autocmd_stop_distance: float = 0.50
 
     # ── Reset noise (robot spawn) ──────────────────────────────────────
     reset_pose_x_range:  tuple = (-0.20, 0.20)
@@ -238,24 +241,23 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     reset_joint_pos_scale_range: tuple = (1.0, 1.0)
     reset_joint_vel_range: tuple = (0.0, 0.0)
 
-    # Box-spawn xy randomization (uniform half-range).
-    reset_box_xy_range: float = 0.10
-    # Target xy randomization (uniform within these half-ranges around the
-    # target table center).
+    # Box-spawn xy randomization (uniform half-range). Small — the box is
+    # near the table edge, so large noise would push it off.
+    reset_box_xy_range: float = 0.05
+    # Target xy randomization (uniform half-range around TARGET_ANCHOR_POS).
     reset_target_xy_half: tuple = TARGET_XY_HALF_RANGE
 
     # ── Reward weights ───────────────────────────────────────────────────
     # Architecture:
-    #   * Navigation reward = phase-1 velocity-tracking reward applied
-    #     against the auto-derived command from ``events.update_autocmd``
-    #     (which points at box-xy if not lifted, target-xy if lifted, with
-    #     magnitude → 0 within ``autocmd_stop_distance`` of the goal).
-    #     The "walk-to-box" / "walk-to-target" behaviour emerges from the
-    #     low-level policy tracking the high-level command — same skill
-    #     it learned in phase 1.
-    #   * Manipulation reward = sparse milestone bonuses layered on top:
-    #     bimanual_contact (one-shot) → lift (one-shot) → place_bonus
-    #     (continuous while box is on target) → drop penalty.
+    #   * Navigation = phase-1 velocity-tracking reward against the
+    #     auto-derived command from ``events.update_autocmd``.
+    #   * Arm guidance = DENSE reach shaping (rew_reach) — palm-to-box
+    #     distance kernel, always on, so the arms have a continuous
+    #     gradient toward the box (and toward keeping it gripped during
+    #     the carry). Without this the only arm signal was the sparse
+    #     bimanual_contact bonus, which is too sparse to discover.
+    #   * Manipulation milestones = bimanual_contact (one-shot) →
+    #     lift (one-shot) → place_bonus (continuous on target) → drop pen.
 
     # Locomotion tracking (mirror of velocity_tracking.yaml defaults).
     rew_track_lin_vel_xy:       float = 1.0
@@ -264,6 +266,13 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     rew_track_ang_vel_std:      float = 0.5
     rew_feet_air_time:          float = 0.75
     rew_feet_air_time_threshold:float = 0.4
+
+    # Dense arm-reach shaping. reward = exp(-mean_palm_to_box_dist² / std²),
+    # always on. Naturally ≈0 while the robot is still walking in (palms
+    # far from box) and ramps up as the arms approach — also rewards
+    # keeping the palms on the box through the carry.
+    rew_reach:                  float = 1.5
+    rew_reach_std:              float = 0.5
 
     # Manipulation milestones.
     rew_bimanual_contact:   float = 10.0     # sparse: one-shot bonus on first frame both palms within GRIP_DISTANCE
@@ -274,24 +283,30 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     # Negative — discourage dropping.
     pen_drop:               float = 100.0    # one-shot when box hits the floor
 
-    # Locomotion regularizers (kept, reduced ×0.5 to stay alive without
-    # dominating the manipulation signal).
+    # Locomotion regularizers — RESTORED to phase-1 (velocity_tracking)
+    # values. The earlier 0.5× reduction degraded gait quality (weird /
+    # jumpy gaits in the from-scratch runs). Matching phase 1 also keeps
+    # the warm-started policy inside the reward landscape it was trained
+    # on. Arm / hand deviation stays very low — those joints must move
+    # freely for the manipulation.
     pen_termination:        float = 200.0    # robot fell
-    pen_lin_vel_z:          float = 0.1
-    pen_ang_vel_xy:         float = 0.025
-    pen_flat_orientation:   float = 0.5
-    pen_action_rate:        float = 0.0025
-    pen_dof_torques:        float = 1.0e-6
-    pen_dof_acc:            float = 0.5e-7
-    pen_dof_pos_limits:     float = 0.5
-    pen_feet_slide:         float = 0.05
-    pen_joint_dev_hip:      float = 0.05
-    pen_joint_dev_arms:     float = 0.05     # lower — arms must move for manipulation
-    pen_joint_dev_hands:    float = 0.025
-    # POSTURE FIX baked in: bumped from 0.1 → 0.3 to address the backward
-    # waist lean seen in the locomotion checkpoints. See the
-    # ``project-locomotion-waist-lean`` memory.
-    pen_joint_dev_waist:    float = 0.3
+    pen_lin_vel_z:          float = 0.2
+    pen_ang_vel_xy:         float = 0.05
+    pen_flat_orientation:   float = 1.0      # pelvis upright
+    pen_action_rate:        float = 0.005
+    pen_dof_torques:        float = 2.0e-6
+    pen_dof_acc:            float = 1.0e-7
+    pen_dof_pos_limits:     float = 1.0
+    pen_feet_slide:         float = 0.1
+    pen_joint_dev_hip:      float = 0.1
+    pen_joint_dev_arms:     float = 0.02     # very low — arms must reach
+    pen_joint_dev_hands:    float = 0.01
+    # POSTURE: the 0.3 waist-deviation penalty did NOT fix the backward
+    # lean. Bumped to 0.6 AND backed by a direct torso-upright term
+    # (pen_torso_upright) — gravity projected into the torso_link frame,
+    # which catches a torso lean even when the pelvis itself is level.
+    pen_joint_dev_waist:    float = 0.6
+    pen_torso_upright:      float = 1.0
 
     # ── Termination ──────────────────────────────────────────────────────
     # Robot fell (same 3-signal check as locomotion).
