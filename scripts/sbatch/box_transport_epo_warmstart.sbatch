@@ -9,5 +9,5 @@
 #SBATCH --error=/scratch2/danielc174/humanoid-rl/slurm/%x_%j.err
 
 export ALGO=epo
-export RUN_TAG=warmstart
-source /home/danielc174/projects/humanoid-rl/scripts/sbatch/_box_transport_warmstart.tpl.sh
+export MODE=warmstart
+source /home/danielc174/projects/humanoid-rl/scripts/sbatch/_box_transport_train.tpl.sh
