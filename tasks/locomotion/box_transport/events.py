@@ -30,7 +30,7 @@ import math
 from typing import TYPE_CHECKING
 
 import torch
-from isaaclab.utils.math import quat_rotate_inverse
+from isaaclab.utils.math import quat_apply_inverse
 
 if TYPE_CHECKING:
     from .env import BoxTransportEnv
@@ -178,7 +178,7 @@ def update_autocmd(env: "BoxTransportEnv") -> None:
 
     # Convert (delta_x, delta_y, 0) into the robot's base frame.
     robot_quat_w = env.robot.data.root_quat_w
-    delta_b = quat_rotate_inverse(robot_quat_w, delta_w)    # (N, 3)
+    delta_b = quat_apply_inverse(robot_quat_w, delta_w)    # (N, 3)
 
     # Distance (xy norm) and unit direction in base frame.
     dist = delta_b[:, :2].norm(dim=-1, keepdim=True).clamp(min=1e-6)  # (N, 1)

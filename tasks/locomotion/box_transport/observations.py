@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-from isaaclab.utils.math import quat_rotate_inverse
+from isaaclab.utils.math import quat_apply_inverse
 
 if TYPE_CHECKING:
     from .env import BoxTransportEnv
@@ -68,11 +68,11 @@ def get_observations(env: "BoxTransportEnv") -> torch.Tensor:
     l_palm_w     = robot.data.body_pos_w[:, env._left_palm_body_id]   # (N, 3)
     r_palm_w     = robot.data.body_pos_w[:, env._right_palm_body_id]  # (N, 3)
 
-    box_pos_rel    = quat_rotate_inverse(robot_quat_w, box_pos_w - robot_pos_w)
-    box_lin_vel_b  = quat_rotate_inverse(robot_quat_w, box_lin_w)
-    target_pos_rel = quat_rotate_inverse(robot_quat_w, target_pos_w - robot_pos_w)
-    l_palm_to_box  = quat_rotate_inverse(robot_quat_w, box_pos_w - l_palm_w)
-    r_palm_to_box  = quat_rotate_inverse(robot_quat_w, box_pos_w - r_palm_w)
+    box_pos_rel    = quat_apply_inverse(robot_quat_w, box_pos_w - robot_pos_w)
+    box_lin_vel_b  = quat_apply_inverse(robot_quat_w, box_lin_w)
+    target_pos_rel = quat_apply_inverse(robot_quat_w, target_pos_w - robot_pos_w)
+    l_palm_to_box  = quat_apply_inverse(robot_quat_w, box_pos_w - l_palm_w)
+    r_palm_to_box  = quat_apply_inverse(robot_quat_w, box_pos_w - r_palm_w)
     # box_to_target left in world frame: it's a goal direction independent of
     # the robot's current heading.
     box_to_target  = target_pos_w - box_pos_w

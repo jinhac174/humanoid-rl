@@ -50,7 +50,7 @@ import torch
 
 import isaaclab.envs.mdp as mdp
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
-from isaaclab.utils.math import quat_rotate_inverse
+from isaaclab.utils.math import quat_apply_inverse
 
 if TYPE_CHECKING:
     from .env import BoxTransportEnv
@@ -142,7 +142,7 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     grav_w = torch.tensor(
         [0.0, 0.0, -1.0], device=env.device,
     ).expand(env.num_envs, 3)
-    torso_grav = quat_rotate_inverse(torso_quat, grav_w)              # (N, 3)
+    torso_grav = quat_apply_inverse(torso_quat, grav_w)              # (N, 3)
     torso_upright = torso_grav[:, :2].square().sum(dim=-1)            # (N,)
 
     # ── Weighted sum ──────────────────────────────────────────────────
