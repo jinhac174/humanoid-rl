@@ -268,20 +268,24 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     rew_feet_air_time_threshold:float = 0.4
 
     # Dense arm-reach shaping. reward = exp(-mean_palm_to_box_dist² / std²),
-    # always on. Naturally ≈0 while the robot is still walking in (palms
-    # far from box) and ramps up as the arms approach — also rewards
-    # keeping the palms on the box through the carry.
-    rew_reach:                  float = 1.5
+    # always on. ≈0 while walking in, ramps up as the arms approach — also
+    # rewards keeping the palms on the box through the carry. Weight 1.0 =
+    # same scale as a locomotion track reward (IsaacLab-consistent).
+    rew_reach:                  float = 1.0
     rew_reach_std:              float = 0.5
 
-    # Manipulation milestones.
-    rew_bimanual_contact:   float = 10.0     # sparse: one-shot bonus on first frame both palms within GRIP_DISTANCE
-    rew_lift:               float = 100.0    # sparse: one-shot bonus on first frame box.z > BOX_LIFT_Z
-    rew_place_bonus:        float = 500.0    # continuous while box xy within rew_place_distance_tol of target AND on table
+    # Manipulation milestones. Scales kept moderate / IsaacLab-consistent:
+    # per-step terms O(1-20), one-shot bonuses O(5-300). (For reference,
+    # IsaacLab's AllegroKuka reorient uses lift-bonus 300, reach-goal 1000;
+    # ours are deliberately conservative.)
+    rew_bimanual_contact:   float = 5.0      # one-shot: both palms within GRIP_DISTANCE
+    rew_lift:               float = 100.0    # one-shot: box.z first crosses BOX_LIFT_Z
+    rew_place_bonus:        float = 20.0     # per-step while box on target within tol
+    rew_success:            float = 300.0    # one-shot terminal: success criterion met
     rew_place_distance_tol: float = 0.15
 
     # Negative — discourage dropping.
-    pen_drop:               float = 100.0    # one-shot when box hits the floor
+    pen_drop:               float = 50.0     # one-shot when box hits the floor
 
     # Locomotion regularizers — RESTORED to phase-1 (velocity_tracking)
     # values. The earlier 0.5× reduction degraded gait quality (weird /

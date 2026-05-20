@@ -7,7 +7,7 @@ defaults:
 
 checkpoint: ???
 
-num_episodes: 3
+num_episodes: 1
 deterministic: true
 
 # Video output

@@ -52,19 +52,20 @@ rew_feet_air_time_threshold:  0.4
 
 # Dense arm-reach shaping — exp(-mean_palm_to_box_dist² / std²), always on.
 # Gives the arms a continuous gradient toward the box (and rewards keeping
-# the box gripped during the carry). Without this the only arm signal was
-# the sparse bimanual_contact bonus, which produced no reaching motion.
-rew_reach:                    1.5
+# the box gripped during the carry). Weight 1.0 = locomotion track scale.
+rew_reach:                    1.0
 rew_reach_std:                0.5
 
-# Manipulation milestones.
-rew_bimanual_contact:   10.0      # sparse one-shot — both palms within GRIP_DISTANCE
-rew_lift:               100.0     # sparse one-shot — box.z first crosses BOX_LIFT_Z
-rew_place_bonus:        500.0     # continuous while placed (per-step)
+# Manipulation milestones — moderate / IsaacLab-consistent scales:
+# per-step terms O(1-20), one-shot bonuses O(5-300).
+rew_bimanual_contact:   5.0       # one-shot — both palms within GRIP_DISTANCE
+rew_lift:               100.0     # one-shot — box.z first crosses BOX_LIFT_Z
+rew_place_bonus:        20.0      # per-step while box on target within tol
+rew_success:            300.0     # one-shot terminal — success criterion met
 rew_place_distance_tol: 0.15      # m — counts as "placed"
 
 # Penalties.
-pen_drop:               100.0     # one-shot when box hits the floor
+pen_drop:               50.0      # one-shot when box hits the floor
 pen_termination:        200.0     # one-shot when robot falls
 # Locomotion regularizers — restored to phase-1 (velocity_tracking) values.
 # The earlier 0.5x reduction degraded gait quality (weird/jumpy gaits).
@@ -111,17 +112,18 @@ eval:
 
 # ── Cameras for the rendered MP4 (tracking cameras, robot-relative) ──
 # See evaluate.py: each frame, eye/lookat are translated by the robot's
-# current world XY (Z absolute). L-shaped scene — start table at (2.5, 0),
-# target table at (2.5, -2.0). Lookat sits roughly at the action centroid
-# and the eyes are pulled back so both tables + robot fit the static
-# scripts/scene_load.py view.
+# current world XY (Z absolute). lookat is now (0,0,0.5) — directly on
+# the robot — so the robot stays CENTRED in frame for the whole episode
+# (the earlier forward-offset lookat pushed the scene to one side).
+# The eye is a fixed world-frame offset, so the robot is viewed from a
+# consistent angle as it walks the L.
 cameras:
   follow:
-    eye:    [-2.0, 4.5, 2.6]    # back-left-up of spawn; covers walk-in + turn
-    lookat: [2.0, -0.9, 0.4]    # action centroid (tables lowered to 0.55)
+    eye:    [-2.0, 3.5, 2.4]    # back-left-up of the robot
+    lookat: [0.0, 0.0, 0.5]     # the robot itself (torso height)
   side:
-    eye:    [5.5, 4.0, 2.0]     # forward-left-up; profile of the L
-    lookat: [2.0, -0.9, 0.4]
+    eye:    [3.5, 3.5, 1.9]     # front-left of the robot
+    lookat: [0.0, 0.0, 0.5]
 
 viewer:
   resolution:  [1280, 720]

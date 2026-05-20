@@ -112,9 +112,10 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     near_z  = box_pos_w[:, 2] < (env._target_z + 0.10)
     place_bonus = (near_xy & near_z).float()
 
-    # ── Sparse penalties (one-shot via terminations) ───────────────────
-    drop       = env._box_dropped_buf.float()
-    term_robot = env._fell_buf.float()
+    # ── Terminal events (one-shot, from terminations.compute_dones) ────
+    success    = env._success_buf.float()       # box held on target → win
+    drop       = env._box_dropped_buf.float()   # box hit the floor
+    term_robot = env._fell_buf.float()          # robot fell
 
     # ── Locomotion regularizers (kept, reduced weights via cfg) ──────
     lin_vel_z    = mdp.lin_vel_z_l2(env, asset_cfg=s["robot_all"])
@@ -153,6 +154,7 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
         + cfg.rew_bimanual_contact * bimanual_contact
         + cfg.rew_lift             * lift
         + cfg.rew_place_bonus      * place_bonus
+        + cfg.rew_success          * success
         - cfg.pen_drop             * drop
         - cfg.pen_termination      * term_robot
         - cfg.pen_lin_vel_z        * lin_vel_z
@@ -179,6 +181,7 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     extras["reward/bimanual_contact"]    = bimanual_contact
     extras["reward/lift"]                = lift
     extras["reward/place_bonus"]         = place_bonus
+    extras["reward/success"]             = success
     extras["reward/drop"]                = drop
     extras["reward/termination"]         = term_robot
     extras["reward/lin_vel_z"]           = lin_vel_z
