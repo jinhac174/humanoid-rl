@@ -64,7 +64,7 @@ BOX_SPAWN_POS = (
 # table — same reasoning, the robot reaches over from in front.
 TARGET_ANCHOR_POS = (
     TARGET_TABLE_POS[0],
-    TARGET_TABLE_POS[1] + TABLE_SIZE[1] / 2 - 0.30,   # y = -1.80
+    TARGET_TABLE_POS[1] + TABLE_SIZE[1] / 2 - 0.20,   # y = -1.70 (0.20 m onto table)
     TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.001,
 )
 # Uniform half-range sampled around TARGET_ANCHOR_POS each reset.
@@ -76,10 +76,11 @@ TARGET_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.001  # tiny epsilon over the surfac
 # the box is clearly off any table and almost on the floor.
 BOX_DROP_Z = 0.20
 
-# Lift threshold: box center must rise 10 cm above its table-rest height
-# (TABLE_TOP_Z + BOX_SIZE/2 = 0.67) to count as lifted — otherwise the
-# flag would fire at spawn before the policy has done anything.
-BOX_LIFT_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2 + 0.10   # = 0.77 m
+# Box rest height (center) when sitting on a table top.
+BOX_REST_Z = TABLE_TOP_Z + BOX_SIZE[2] / 2          # = 0.67 m
+# Lift threshold: box center must rise 10 cm above rest to count as lifted
+# — otherwise the flag would fire at spawn before the policy acts.
+BOX_LIFT_Z = BOX_REST_Z + 0.10                      # = 0.77 m
 
 # Bimanual-contact gating: both palms within this distance from the box
 # centre to count as "gripping".
@@ -229,10 +230,10 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     autocmd_ang_vel_max:   float = 1.0
     autocmd_heading_stiffness: float = 0.5
     # Distance to the active goal at which command magnitude reaches zero.
-    # Box / target now sit near the front edge of their tables, so 0.50 m
-    # puts the pelvis ~0.3 m in front of the table face — close enough that
-    # extended arms reach the box, far enough that the body stays clear.
-    autocmd_stop_distance: float = 0.50
+    # 0.40 m → pelvis stops ~0.2 m in front of the table face: the box is
+    # then a ~0.4 m forward reach (within G1 arm range from a slight lean),
+    # while the legs still stay clear of the table footprint.
+    autocmd_stop_distance: float = 0.40
 
     # ── Reset noise (robot spawn) ──────────────────────────────────────
     reset_pose_x_range:  tuple = (-0.20, 0.20)
@@ -267,25 +268,43 @@ class BoxTransportEnvCfg(DirectRLEnvCfg):
     rew_feet_air_time:          float = 0.75
     rew_feet_air_time_threshold:float = 0.4
 
-    # Dense arm-reach shaping. reward = exp(-mean_palm_to_box_dist² / std²),
-    # always on. ≈0 while walking in, ramps up as the arms approach — also
-    # rewards keeping the palms on the box through the carry. Weight 1.0 =
-    # same scale as a locomotion track reward (IsaacLab-consistent).
-    rew_reach:                  float = 1.0
-    rew_reach_std:              float = 0.5
+    # ── Manipulation reward — dense staged shaping ───────────────────────
+    # Diagnosis from the first 6 runs: arms never reached. The old reach
+    # term (weight 1, exp(-d²/σ²)) had a VANISHING gradient far from the
+    # box and was a minority signal vs the ~2/step locomotion reward — the
+    # policy maximised reward by walking to the box and standing still.
+    # Fix: a strong, non-vanishing dense gradient at EVERY stage, mirroring
+    # the reorient task's staged structure (reach → lift → carry → place).
 
-    # Manipulation milestones. Scales kept moderate / IsaacLab-consistent:
-    # per-step terms O(1-20), one-shot bonuses O(5-300). (For reference,
-    # IsaacLab's AllegroKuka reorient uses lift-bonus 300, reach-goal 1000;
-    # ours are deliberately conservative.)
-    rew_bimanual_contact:   float = 5.0      # one-shot: both palms within GRIP_DISTANCE
-    rew_lift:               float = 100.0    # one-shot: box.z first crosses BOX_LIFT_Z
-    rew_place_bonus:        float = 20.0     # per-step while box on target within tol
-    rew_success:            float = 300.0    # one-shot terminal: success criterion met
-    rew_place_distance_tol: float = 0.15
+    # Stage 1 — REACH. Per-arm exp(-d/σ) kernel: non-vanishing gradient
+    # (unlike the d² kernel). reward = 0.5*(exp(-l/σ)+exp(-r/σ)), always
+    # on (≈0 far away, so no gate needed). Weight 10 so that AT the box it
+    # dominates the ~2/step locomotion reward — reaching the arms in is
+    # then unambiguously the highest-value action.
+    rew_reach:               float = 10.0
+    rew_reach_std:           float = 0.35
+
+    # Stage 2 — LIFT. Dense height shaping clip(box.z-rest, 0, H)/H, always
+    # on, plus the one-shot crossing bonus.
+    rew_lift_shaping:        float = 5.0
+    rew_lift_shaping_height: float = 0.30    # m of rise that saturates the term
+    rew_lift:                float = 100.0   # one-shot: box.z first crosses BOX_LIFT_Z
+
+    # Stage 3 — CARRY. Dense exp(-box_to_target_xy / σ) kernel, gated on the
+    # box being currently lifted — pulls the held box toward the target.
+    rew_carry:               float = 8.0
+    rew_carry_std:           float = 1.0
+
+    # Stage 4 — PLACE. Per-step bonus on target + one-shot terminal success.
+    rew_place_bonus:         float = 20.0    # per-step while box on target within tol
+    rew_success:             float = 300.0   # one-shot terminal: success criterion met
+    rew_place_distance_tol:  float = 0.15
+
+    # Milestone marker (small one-shot; mainly feeds the task/ diagnostic).
+    rew_bimanual_contact:    float = 5.0
 
     # Negative — discourage dropping.
-    pen_drop:               float = 50.0     # one-shot when box hits the floor
+    pen_drop:                float = 50.0    # one-shot when box hits the floor
 
     # Locomotion regularizers — RESTORED to phase-1 (velocity_tracking)
     # values. The earlier 0.5× reduction degraded gait quality (weird /

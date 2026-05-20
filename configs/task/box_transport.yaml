@@ -24,9 +24,9 @@ autocmd_lin_vel_max:       1.0
 autocmd_ang_vel_max:       1.0
 autocmd_heading_stiffness: 0.5
 # Distance to active goal at which command magnitude reaches zero.
-# 0.50 m → pelvis stops ~0.3 m in front of the (lower) table; box/target
-# now sit near the front edge so extended arms reach comfortably.
-autocmd_stop_distance:     0.50
+# 0.40 m → pelvis stops ~0.2 m in front of the table face; the box is then
+# a ~0.4 m forward reach (within G1 arm range), legs still clear the table.
+autocmd_stop_distance:     0.40
 
 # ── Reset noise ──────────────────────────────────────────────────────
 reset_pose_x_range:   [-0.20, 0.20]
@@ -50,22 +50,38 @@ rew_track_ang_vel_std:        0.5
 rew_feet_air_time:            0.75
 rew_feet_air_time_threshold:  0.4
 
-# Dense arm-reach shaping — exp(-mean_palm_to_box_dist² / std²), always on.
-# Gives the arms a continuous gradient toward the box (and rewards keeping
-# the box gripped during the carry). Weight 1.0 = locomotion track scale.
-rew_reach:                    1.0
-rew_reach_std:                0.5
+# ── Manipulation reward — dense staged shaping ─────────────────────────
+# First 6 runs failed: arms never reached. The old reach term (weight 1,
+# d² kernel) had a vanishing gradient and lost to the ~2/step locomotion
+# reward. Now: a strong non-vanishing dense gradient at every stage
+# (reach → lift → carry → place), mirroring the reorient task structure.
 
-# Manipulation milestones — moderate / IsaacLab-consistent scales:
-# per-step terms O(1-20), one-shot bonuses O(5-300).
-rew_bimanual_contact:   5.0       # one-shot — both palms within GRIP_DISTANCE
-rew_lift:               100.0     # one-shot — box.z first crosses BOX_LIFT_Z
-rew_place_bonus:        20.0      # per-step while box on target within tol
-rew_success:            300.0     # one-shot terminal — success criterion met
-rew_place_distance_tol: 0.15      # m — counts as "placed"
+# Stage 1 — REACH: per-arm exp(-d/σ), weight 10 so it dominates locomotion
+# at the box. Reaching the arms in becomes the highest-value action.
+rew_reach:               10.0
+rew_reach_std:           0.35
+
+# Stage 2 — LIFT: dense height shaping (0..1 over rew_lift_shaping_height
+# metres of rise) + one-shot crossing bonus.
+rew_lift_shaping:        5.0
+rew_lift_shaping_height: 0.30
+rew_lift:                100.0    # one-shot — box.z first crosses BOX_LIFT_Z
+
+# Stage 3 — CARRY: dense exp(-box_to_target_xy / σ), gated on lifted —
+# pulls the held box toward the target table.
+rew_carry:               8.0
+rew_carry_std:           1.0
+
+# Stage 4 — PLACE: per-step bonus on target + one-shot terminal success.
+rew_place_bonus:         20.0     # per-step while box on target within tol
+rew_success:             300.0    # one-shot terminal — success criterion met
+rew_place_distance_tol:  0.15     # m — counts as "placed"
+
+# Milestone marker (small one-shot; mainly feeds the task/ diagnostic).
+rew_bimanual_contact:    5.0
 
 # Penalties.
-pen_drop:               50.0      # one-shot when box hits the floor
+pen_drop:                50.0     # one-shot when box hits the floor
 pen_termination:        200.0     # one-shot when robot falls
 # Locomotion regularizers — restored to phase-1 (velocity_tracking) values.
 # The earlier 0.5x reduction degraded gait quality (weird/jumpy gaits).

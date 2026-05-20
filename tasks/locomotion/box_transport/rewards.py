@@ -81,35 +81,46 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     l_palm_w = env.robot.data.body_pos_w[:, env._left_palm_body_id]
     r_palm_w = env.robot.data.body_pos_w[:, env._right_palm_body_id]
 
-    # ── Dense arm-reach shaping ────────────────────────────────────────
-    # exp kernel on the mean palm-to-box distance. Always on: ≈0 while the
-    # robot is still walking in (palms far from box), ramps up smoothly as
-    # the arms approach, and stays high while the box is gripped during the
-    # carry. This is the continuous gradient that guides the arms — the
-    # bimanual_contact bonus below is too sparse to discover on its own.
+    # ── Stage 1 — REACH (dense, per-arm exp(-d/σ) kernel) ──────────────
+    # Non-vanishing gradient (unlike a d² kernel): pulls each palm toward
+    # the box from any distance. ≈0 while walking in (palms far away),
+    # climbs to ≈1 once both palms are on the box, and stays high through
+    # the carry (rewards keeping the grip). Per-arm sum so the far arm
+    # always has its own gradient.
     l_palm_dist = (l_palm_w - box_pos_w).norm(dim=-1)
     r_palm_dist = (r_palm_w - box_pos_w).norm(dim=-1)
-    mean_palm_dist = 0.5 * (l_palm_dist + r_palm_dist)
-    reach = torch.exp(-(mean_palm_dist ** 2) / (cfg.rew_reach_std ** 2))
+    std_r = cfg.rew_reach_std
+    reach = 0.5 * (
+        torch.exp(-l_palm_dist / std_r) + torch.exp(-r_palm_dist / std_r)
+    )
 
-    # ── Manipulation milestone 1 — bimanual contact (one-shot) ─────────
+    # ── Milestone marker — bimanual contact (one-shot) ─────────────────
     grip = float(env._grip_distance)
     both_palms_close = (l_palm_dist < grip) & (r_palm_dist < grip)
     bimanual_event = both_palms_close & (~env._bimanual_contact_achieved)
     env._bimanual_contact_achieved = env._bimanual_contact_achieved | both_palms_close
     bimanual_contact = bimanual_event.float()
 
-    # ── Manipulation milestone 2 — lift (one-shot) ────────────────────
-    lifted_now = (box_pos_w[:, 2] > env._box_lift_z)
+    # ── Stage 2 — LIFT (dense height shaping + one-shot bonus) ─────────
+    box_z = box_pos_w[:, 2]
+    lift_shaping = torch.clip(
+        box_z - env._box_rest_z, 0.0, cfg.rew_lift_shaping_height
+    ) / cfg.rew_lift_shaping_height               # 0..1, dense
+    lifted_now = box_z > env._box_lift_z
     lift_event = lifted_now & (~env._lift_achieved)
     env._lift_achieved = env._lift_achieved | lifted_now
     lift = lift_event.float()
 
-    # ── Manipulation milestone 3 — place bonus (continuous) ───────────
-    # Box xy near the per-env target AND z below "well above the table".
+    # ── Stage 3 — CARRY (dense, gated on currently lifted) ─────────────
+    # exp kernel on the box→target xy distance — pulls the HELD box toward
+    # the target table. Zero when the box isn't currently up.
     box_xy_err = (box_pos_w[:, :2] - target_pos_w[:, :2]).norm(dim=-1)
+    carry = lifted_now.float() * torch.exp(-box_xy_err / cfg.rew_carry_std)
+
+    # ── Stage 4 — PLACE bonus (continuous) ─────────────────────────────
+    # Box xy near the per-env target AND z below "well above the table".
     near_xy = box_xy_err < cfg.rew_place_distance_tol
-    near_z  = box_pos_w[:, 2] < (env._target_z + 0.10)
+    near_z  = box_z < (env._target_z + 0.10)
     place_bonus = (near_xy & near_z).float()
 
     # ── Terminal events (one-shot, from terminations.compute_dones) ────
@@ -151,6 +162,8 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
         + cfg.rew_track_ang_vel_z  * track_ang_z
         + cfg.rew_feet_air_time    * feet_air_time
         + cfg.rew_reach            * reach
+        + cfg.rew_lift_shaping     * lift_shaping
+        + cfg.rew_carry            * carry
         + cfg.rew_bimanual_contact * bimanual_contact
         + cfg.rew_lift             * lift
         + cfg.rew_place_bonus      * place_bonus
@@ -178,6 +191,8 @@ def compute_reward(env: "BoxTransportEnv") -> torch.Tensor:
     extras["reward/track_ang_vel_z"]     = track_ang_z
     extras["reward/feet_air_time"]       = feet_air_time
     extras["reward/reach"]               = reach
+    extras["reward/lift_shaping"]        = lift_shaping
+    extras["reward/carry"]               = carry
     extras["reward/bimanual_contact"]    = bimanual_contact
     extras["reward/lift"]                = lift
     extras["reward/place_bonus"]         = place_bonus

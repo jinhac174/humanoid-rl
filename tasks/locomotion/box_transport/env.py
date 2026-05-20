@@ -47,6 +47,7 @@ from . import rewards as rew_fn
 from . import terminations as term_fn
 from .env_cfg import (
     BOX_LIFT_Z,
+    BOX_REST_Z,
     BOX_SPAWN_POS,
     GRIP_DISTANCE,
     LEFT_FOOT_BODY,
@@ -153,6 +154,7 @@ class BoxTransportEnv(DirectRLEnv):
         self._target_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
         self._target_z = float(TARGET_Z)
         self._box_lift_z = float(BOX_LIFT_Z)
+        self._box_rest_z = float(BOX_REST_Z)
         self._grip_distance = float(GRIP_DISTANCE)
         # Used by events.reset_box (env-local box spawn position).
         self._box_spawn_pos_local = torch.tensor(
